@@ -5,7 +5,7 @@
     <link>https://youngfish42.github.io/law_query/</link>
     <description>AI、数智化、大模型等相关法规的最新更新订阅</description>
     <language>zh-CN</language>
-    <lastBuildDate>Sun, 11 Oct 2026 09:12:00 +0800</lastBuildDate>
+    <lastBuildDate>Mon, 12 Oct 2026 09:54:00 +0800</lastBuildDate>
     <ttl>1440</ttl>
     <atom:link href="https://youngfish42.github.io/law_query/feed.xml" rel="self" type="application/rss+xml" />
     <item>
@@ -22,6 +22,14 @@
       <description>分类：中央法规；公布日期：2026.10.08；制定机关：其他机构；协会；中国互联网协会；效力位阶：行业规定；时效性：现行有效</description>
       <guid isPermaLink="true">https://www.pkulaw.com/chl/cbd2d5a8155d3a50bdfb.html</guid>
       <category>中央法规</category>
+      <pubDate>Thu, 08 Oct 2026 00:00:00 +0800</pubDate>
+    </item>
+    <item>
+      <title>国家药监局核查中心关于公开征求《人工智能医疗器械检查要点(征求意见稿)》意见的通知</title>
+      <link>https://www.pkulaw.com/protocol/8e2805d9c957b83b925af273a4a32982bdfb.html?keyword=%E6%99%BA%E8%83%BD&amp;way=listView</link>
+      <description>分类：立法资料；公布日期：2026.10.08；制定机关：国家药品监督管理局(已变更)；效力位阶：部门工作文件</description>
+      <guid isPermaLink="true">https://www.pkulaw.com/protocol/8e2805d9c957b83b925af273a4a32982bdfb.html?keyword=%E6%99%BA%E8%83%BD&amp;way=listView</guid>
+      <category>立法资料</category>
       <pubDate>Thu, 08 Oct 2026 00:00:00 +0800</pubDate>
     </item>
     <item>
@@ -797,14 +805,6 @@
       <link>https://www.pkulaw.com/news/514805f089ae0e9fbdfb.html?keyword=AI&amp;way=listView</link>
       <description>分类：法律动态；公布日期：2026.09.02；制定机关：国资委</description>
       <guid isPermaLink="true">https://www.pkulaw.com/news/514805f089ae0e9fbdfb.html?keyword=AI&amp;way=listView</guid>
-      <category>法律动态</category>
-      <pubDate>Wed, 02 Sep 2026 00:00:00 +0800</pubDate>
-    </item>
-    <item>
-      <title>中部六省算力调度平台接入全国一体化算力网</title>
-      <link>https://www.pkulaw.com/news/0418b4dcae848e00bdfb.html?keyword=%E7%AE%97%E5%8A%9B&amp;way=listView</link>
-      <description>分类：法律动态；公布日期：2026.09.02</description>
-      <guid isPermaLink="true">https://www.pkulaw.com/news/0418b4dcae848e00bdfb.html?keyword=%E7%AE%97%E5%8A%9B&amp;way=listView</guid>
       <category>法律动态</category>
       <pubDate>Wed, 02 Sep 2026 00:00:00 +0800</pubDate>
     </item>
