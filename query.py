@@ -1798,16 +1798,20 @@ def run_mcp_backfill(
         sy, sm = (int(p) for p in start_month.split("."))
         hist_start = date(sy, sm, 1)
         hist_end = date(prev_year, prev_month, calendar.monthrange(prev_year, prev_month)[1])
+        queues: dict = {}
         for kw in keywords:
-            if stop:
-                break
             if refresh:
                 # refresh 忽略账本：全历史跨度作为单一初始窗口（拆分由检索层负责）
-                queue: List[tuple] = [(hist_start, hist_end)]
+                queues[kw] = [(hist_start, hist_end)]
             else:
-                queue = _uncovered_spans(coverage, kw, start_month, prev_month_prefix)
-            while queue and not stop:
-                span_start, span_end = queue.pop(0)
+                queues[kw] = _uncovered_spans(coverage, kw, start_month, prev_month_prefix)
+        # 跨关键词轮转：每轮每个关键词只扫一个跨度（≤cap 次调用），避免有限预算下
+        # 单个高热关键词吃完全部额度、其余关键词迟迟排不上
+        while not stop and any(queues[kw] for kw in keywords):
+            for kw in keywords:
+                if stop or not queues[kw]:
+                    continue
+                span_start, span_end = queues[kw].pop(0)
                 cap = _next_cap()
                 if cap <= 0:
                     break
@@ -1850,7 +1854,7 @@ def run_mcp_backfill(
                     _record_coverage_dates(coverage, kw, covered, now)
                     _save_backfill_state(state_path, coverage)
                 if truncated:
-                    queue = list(remaining) + queue
+                    queues[kw] = list(remaining) + queues[kw]
                     print(
                         f"WARNING: 跨度 {span_label} '{kw}' 未扫完，"
                         f"已入账 {len(covered)} 个已解析区间，剩余 {len(remaining)} 个窗口续扫。"
