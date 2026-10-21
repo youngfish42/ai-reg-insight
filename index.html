@@ -24,6 +24,7 @@
             --detail-bg: #f8f9fa;
             --disabled-color: #adb5bd;
             --disabled-bg: #f8f9fa;
+            --serif-font: "Source Han Serif SC", "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
         }
 
         body {
@@ -47,6 +48,7 @@
             text-align: center;
             margin-bottom: 10px;
             color: var(--heading-color);
+            font-family: var(--serif-font);
         }
 
         .timestamp {
@@ -121,6 +123,8 @@
             line-height: 1.45;
         }
 
+        tbody td { font-size: 0.95em; }
+
         th {
             background-color: var(--header-bg);
             font-weight: 600;
@@ -175,7 +179,7 @@
         tbody tr.data-row.expanded td.cell-title::before { transform: rotate(90deg); }
 
         /* Column Specifics */
-        .col-category { width: 80px; }
+        .col-docno { width: 170px; }
         .col-date { width: 110px; white-space: nowrap; }
         .col-authority { width: 140px; }
         .col-hierarchy { width: 120px; }
@@ -187,10 +191,12 @@
             display: block;
         }
 
+        /* 法规标题用衬线字体（公文阅读习惯），加大行高便于长标题扫读 */
         td.cell-title a,
         td.cell-title .title-plain {
             display: inline;
-            line-height: 1.5;
+            font-family: var(--serif-font);
+            line-height: 1.7;
         }
         td.cell-title .title-plain {
             color: var(--heading-color);
@@ -301,7 +307,7 @@
             text-decoration: none;
         }
 
-        /* Category badges */
+        /* Badges: 仅保留时效提示，弱化视觉噪声 */
         .badge {
             display: inline-block;
             padding: 2px 8px;
@@ -310,16 +316,10 @@
             font-weight: 600;
             white-space: nowrap;
         }
-        .badge-central              { background: #dbeafe; color: #1d4ed8; }
-        .badge-local                { background: #dcfce7; color: #15803d; }
-        .badge-legislative_materials     { background: #fef9c3; color: #92400e; }
-        .badge-legislative_interpretations { background: #ede9fe; color: #6d28d9; }
-        .badge-legal_updates        { background: #fce7f3; color: #be185d; }
-        .badge-default              { background: #f1f5f9; color: #475569; }
-        .badge-new                  { background: #fee2e2; color: #b91c1c; margin-left: 6px; }
-        .badge-pending              { background: #ffedd5; color: #c2410c; margin-left: 6px; }
+        .badge-new                  { background: #fdeded; color: #b03434; margin-left: 6px; }
+        .badge-pending              { background: transparent; border: 1px solid #fdba74; color: #c2410c; margin-left: 6px; }
 
-        /* Subject tag pills: smaller & subtler than category badges */
+        /* Subject tag pills: smaller & subtler */
         .tag-pills {
             display: flex;
             flex-wrap: wrap;
@@ -348,7 +348,7 @@
             color: #fff;
         }
 
-        /* Filter labels & hierarchy select inside the filter area */
+        /* Filter labels & selects inside the filter area */
         .filter-label {
             font-size: 0.85em;
             color: var(--muted-color);
@@ -362,7 +362,7 @@
             color: var(--text-secondary);
             font-size: 0.85em;
             cursor: pointer;
-            max-width: 100%;
+            max-width: 300px;
         }
         .tag-filter-row[hidden] { display: none; }
 
@@ -613,6 +613,7 @@
             }
 
             /* Override desktop column widths so card cells stretch full width */
+            table tbody td.col-docno,
             table tbody td.col-authority,
             table tbody td.col-hierarchy {
                 width: auto;
@@ -650,7 +651,7 @@
             }
             table tbody td.cell-title a {
                 font-size: 1em;
-                line-height: 1.5;
+                line-height: 1.7;
             }
 
             /* Badges: right-align inside cell flex */
@@ -702,14 +703,8 @@
             .container { box-shadow: 0 2px 4px rgba(0,0,0,0.4); }
             table tbody tr { box-shadow: none; }
 
-            .badge-central              { background: #1e3a5f; color: #93c5fd; }
-            .badge-local                { background: #14532d; color: #86efac; }
-            .badge-legislative_materials     { background: #4a3a12; color: #fde68a; }
-            .badge-legislative_interpretations { background: #3b2d6b; color: #c4b5fd; }
-            .badge-legal_updates        { background: #5b1d3d; color: #f9a8d4; }
-            .badge-default              { background: #2f353d; color: #b8bec5; }
-            .badge-new                  { background: #5f1d1d; color: #fca5a5; }
-            .badge-pending              { background: #5a3410; color: #fdba74; }
+            .badge-new                  { background: #4a2323; color: #e8a1a1; }
+            .badge-pending              { background: transparent; border-color: #8a5520; color: #fdba74; }
 
             .tag-pill { border-color: var(--border-strong); }
             .tag-pill.active { color: #0f1418; }
@@ -734,7 +729,7 @@
         <div class="toolbar">
             <div class="controls">
                 <div class="search-box-container">
-                    <input type="text" id="searchInput" placeholder="搜索标题、分类、日期、机关、位阶、发文字号或标签...">
+                    <input type="text" id="searchInput" placeholder="搜索标题、发文字号（如 国发〔2025〕1号）、机关、位阶、日期或标签...">
                     <button class="search-clear" id="searchClear" onclick="clearSearch()" aria-label="清除搜索">✕</button>
                     <span class="search-icon" aria-hidden="true">🔍</span>
                 </div>
@@ -744,7 +739,7 @@
                     <option value="publish_date_asc">公布日期（最旧）</option>
                     <option value="title_asc">标题（升序）</option>
                     <option value="title_desc">标题（降序）</option>
-                    <option value="category_asc">分类（升序）</option>
+                    <option value="document_no_asc">发文字号（升序）</option>
                     <option value="issuing_authority_asc">制定机关（升序）</option>
                     <option value="legal_hierarchy_asc">效力位阶（升序）</option>
                 </select>
@@ -757,8 +752,6 @@
             <div class="filter-chips">
                 <div class="chip-group" id="categoryChips" role="group" aria-label="分类筛选">
                     <button class="chip active" data-value="all" aria-pressed="true" onclick="setCategoryFilter('all')">全部</button>
-                    <button class="chip" data-value="中央法规" aria-pressed="false" onclick="setCategoryFilter('中央法规')">中央法规</button>
-                    <button class="chip" data-value="地方法规" aria-pressed="false" onclick="setCategoryFilter('地方法规')">地方法规</button>
                     <button class="chip" data-value="立法资料" aria-pressed="false" onclick="setCategoryFilter('立法资料')">立法资料</button>
                     <button class="chip" data-value="法规解读" aria-pressed="false" onclick="setCategoryFilter('法规解读')">法规解读</button>
                     <button class="chip" data-value="法律动态" aria-pressed="false" onclick="setCategoryFilter('法律动态')">法律动态</button>
@@ -773,6 +766,10 @@
                     <select id="hierarchySelect" class="hierarchy-select" onchange="handleHierarchyFilter()" aria-label="效力位阶筛选">
                         <option value="all">全部位阶</option>
                     </select>
+                    <label class="filter-label" for="authoritySelect">制定机关</label>
+                    <select id="authoritySelect" class="hierarchy-select" onchange="handleAuthorityFilter()" aria-label="制定机关筛选">
+                        <option value="all">全部机关</option>
+                    </select>
                 </div>
                 <div class="chip-group tag-filter-row" id="tagFilterRow" hidden>
                     <span class="filter-label">标签筛选：</span>
@@ -786,7 +783,7 @@
                 <thead>
                     <tr>
                         <th scope="col" data-column="title" onclick="handleSort('title')">标题</th>
-                        <th scope="col" class="col-category" data-column="category" onclick="handleSort('category')">分类</th>
+                        <th scope="col" class="col-docno" data-column="document_no" onclick="handleSort('document_no')">发文字号</th>
                         <th scope="col" class="col-date" data-column="publish_date" onclick="handleSort('publish_date')">公布日期</th>
                         <th scope="col" class="col-authority" data-column="issuing_authority" onclick="handleSort('issuing_authority')">制定机关</th>
                         <th scope="col" class="col-hierarchy" data-column="legal_hierarchy" onclick="handleSort('legal_hierarchy')">效力位阶</th>
@@ -827,19 +824,13 @@
         let currentCategoryFilter = 'all';
         let currentTimelinessFilter = 'all';
         let currentHierarchyFilter = 'all';
+        let currentAuthorityFilter = 'all';
         let currentTagFilter = '';
         let dataReferenceDate = null; // meta.json 的 updated_at，用于「新」徽章判定
         const expandedRows = new Set(); // keyed by row url, keeps expansion across re-renders
-        const categoryMap = {
-            central: '中央法规',
-            local: '地方法规',
-            legislative_materials: '立法资料',
-            legislative_interpretations: '法规解读',
-            legal_updates: '法律动态'
-        };
-        const VALID_CATEGORIES = ['中央法规', '地方法规', '立法资料', '法规解读', '法律动态'];
+        const VALID_CATEGORIES = ['立法资料', '法规解读', '法律动态'];
         const VALID_TIMELINESS = ['现行有效', '尚未施行'];
-        const VALID_SORT_COLUMNS = ['title', 'category', 'publish_date', 'issuing_authority', 'legal_hierarchy'];
+        const VALID_SORT_COLUMNS = ['title', 'document_no', 'publish_date', 'issuing_authority', 'legal_hierarchy'];
         const NEW_BADGE_DAYS = 7;
         const MAX_VISIBLE_TAGS = 3;
 
@@ -920,22 +911,63 @@
             applyFilterAndSort();
         }
 
-        // 位阶下拉选项从当前数据动态收集，按出现次数降序；
-        // 「部门规章；部门工作文件」这类复合值逐项计数，不作为独立选项
-        function updateHierarchyOptions() {
+        function handleAuthorityFilter() {
+            currentAuthorityFilter = document.getElementById('authoritySelect').value;
+            currentPage = 1;
+            applyFilterAndSort();
+        }
+
+        // 校验筛选取值在全量数据中是否存在（数据更新后旧值可能已消失）
+        function validateFilterValue(field, currentValue) {
+            if (currentValue === 'all') return currentValue;
+            for (const row of allData) {
+                if (parseList(row[field]).includes(currentValue)) return currentValue;
+            }
+            return 'all';
+        }
+
+        // 当前激活的过滤条件。exclude 用于联动计数：
+        // 计算某维度的可选值时排除该维度自身，否则切换选项只会看到 0
+        function passesFilters(item, searchTerm, exclude) {
+            if (currentCategoryFilter !== 'all' && (item.category || '').trim() !== currentCategoryFilter) return false;
+            if (currentTimelinessFilter !== 'all' && !parseList(item.timeliness).includes(currentTimelinessFilter)) return false;
+            if (exclude !== 'hierarchy' && currentHierarchyFilter !== 'all'
+                && !parseList(item.legal_hierarchy).includes(currentHierarchyFilter)) return false;
+            if (exclude !== 'authority' && currentAuthorityFilter !== 'all'
+                && !parseList(item.issuing_authority).includes(currentAuthorityFilter)) return false;
+            if (currentTagFilter && !parseList(item.subject_tags).includes(currentTagFilter)) return false;
+            if (searchTerm) {
+                const haystack = [
+                    item.title, item.category, item.publish_date, item.issuing_authority,
+                    item.legal_hierarchy, item.document_no, item.subject_tags
+                ].map(v => (v || '').toLowerCase());
+                if (!haystack.some(v => v.includes(searchTerm))) return false;
+            }
+            return true;
+        }
+
+        // 联动计数：选项计数 = 应用除本维度外所有筛选后的命中数，按计数降序。
+        // 计数为 0 的选项隐藏（当前选中值除外，保留显示以免选择被吞掉）
+        function updateFacetOptions(selectId, field, currentValue, allLabel, searchTerm, exclude) {
             const counts = new Map();
             allData.forEach(row => {
-                parseList(row.legal_hierarchy).forEach(h => counts.set(h, (counts.get(h) || 0) + 1));
+                if (!passesFilters(row, searchTerm, exclude)) return;
+                parseList(row[field]).forEach(v => counts.set(v, (counts.get(v) || 0) + 1));
             });
             const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'zh'));
-            const sel = document.getElementById('hierarchySelect');
-            sel.innerHTML = '<option value="all">全部位阶</option>' + sorted.map(([h, n]) =>
-                `<option value="${escapeHtml(h)}">${escapeHtml(h)}（${n}）</option>`).join('');
-            // 数据更新后当前位阶可能已不存在
-            if (currentHierarchyFilter !== 'all' && !counts.has(currentHierarchyFilter)) {
-                currentHierarchyFilter = 'all';
+            let html = `<option value="all">${allLabel}</option>`;
+            if (currentValue !== 'all' && !counts.has(currentValue)) {
+                html += `<option value="${escapeHtml(currentValue)}">${escapeHtml(currentValue)}（0）</option>`;
             }
-            sel.value = currentHierarchyFilter;
+            html += sorted.map(([v, n]) =>
+                `<option value="${escapeHtml(v)}">${escapeHtml(v)}（${n}）</option>`).join('');
+            const sel = document.getElementById(selectId);
+            // 内容未变时跳过重建：避免打断用户正在浏览的下拉，也减少 DOM churn
+            if (sel.dataset.facetHtml !== html) {
+                sel.innerHTML = html;
+                sel.dataset.facetHtml = html;
+            }
+            sel.value = currentValue;
         }
 
         function updateChipStates() {
@@ -958,10 +990,13 @@
             } else {
                 tagRow.hidden = true;
             }
-            // 位阶下拉（选项可能尚未生成）
-            const sel = document.getElementById('hierarchySelect');
-            const hasValue = Array.from(sel.options).some(o => o.value === currentHierarchyFilter);
-            sel.value = hasValue ? currentHierarchyFilter : 'all';
+            // 位阶 / 制定机关下拉（选项可能尚未生成）
+            const hierSel = document.getElementById('hierarchySelect');
+            const hierHasValue = Array.from(hierSel.options).some(o => o.value === currentHierarchyFilter);
+            hierSel.value = hierHasValue ? currentHierarchyFilter : 'all';
+            const authSel = document.getElementById('authoritySelect');
+            const authHasValue = Array.from(authSel.options).some(o => o.value === currentAuthorityFilter);
+            authSel.value = authHasValue ? currentAuthorityFilter : 'all';
         }
 
         // 默认状态不写 hash，保持首屏 URL 干净
@@ -970,6 +1005,7 @@
                 && currentCategoryFilter === 'all'
                 && currentTimelinessFilter === 'all'
                 && currentHierarchyFilter === 'all'
+                && currentAuthorityFilter === 'all'
                 && !currentTagFilter
                 && currentSort.column === 'publish_date'
                 && currentSort.direction === 'desc'
@@ -988,6 +1024,7 @@
             if (currentCategoryFilter !== 'all') params.set('cat', currentCategoryFilter);
             if (currentTimelinessFilter !== 'all') params.set('tim', currentTimelinessFilter);
             if (currentHierarchyFilter !== 'all') params.set('hier', currentHierarchyFilter);
+            if (currentAuthorityFilter !== 'all') params.set('auth', currentAuthorityFilter);
             if (currentTagFilter) params.set('tag', currentTagFilter);
             if (currentSort.column !== 'publish_date') params.set('sort', currentSort.column);
             if (currentSort.direction !== 'desc') params.set('dir', currentSort.direction);
@@ -1004,9 +1041,11 @@
             currentCategoryFilter = VALID_CATEGORIES.includes(cat) ? cat : 'all';
             const tim = params.get('tim');
             currentTimelinessFilter = VALID_TIMELINESS.includes(tim) ? tim : 'all';
-            // tag / hier 的合法取值随数据动态变化，这里仅做非空与长度校验
+            // hier / auth / tag 的合法取值随数据动态变化，这里仅做非空与长度校验
             const hier = params.get('hier');
             currentHierarchyFilter = (hier && hier.length <= 100) ? hier : 'all';
+            const auth = params.get('auth');
+            currentAuthorityFilter = (auth && auth.length <= 100) ? auth : 'all';
             const tag = params.get('tag');
             currentTagFilter = (tag && tag.length <= 50) ? tag : '';
             const sortCol = params.get('sort');
@@ -1090,9 +1129,12 @@
             restoreStateFromHash();
             window.addEventListener('hashchange', function() {
                 restoreStateFromHash();
-                // 数据已加载时校验位阶取值有效性：数据中不存在则回退（同时重置筛选变量与下拉框）
+                // 数据已加载时校验位阶/机关取值有效性：数据中不存在则回退（同时重置筛选变量与下拉框）
                 // 数据未加载时跳过，避免把 hash 还原的合法取值误清
-                if (allData.length) updateHierarchyOptions();
+                if (allData.length) {
+                    currentHierarchyFilter = validateFilterValue('legal_hierarchy', currentHierarchyFilter);
+                    currentAuthorityFilter = validateFilterValue('issuing_authority', currentAuthorityFilter);
+                }
                 applyFilterAndSort();
             });
 
@@ -1139,7 +1181,8 @@
                         if (!currentKeys.has(key)) expandedRows.delete(key);
                     }
 
-                    updateHierarchyOptions();
+                    currentHierarchyFilter = validateFilterValue('legal_hierarchy', currentHierarchyFilter);
+                    currentAuthorityFilter = validateFilterValue('issuing_authority', currentAuthorityFilter);
                     applyFilterAndSort();
                     document.getElementById('loading').style.display = 'none';
                     document.getElementById('pagination').style.display = 'flex';
@@ -1210,34 +1253,10 @@
             const searchTerm = document.getElementById('searchInput').value.toLowerCase().trim();
 
             // 1. Filter
-            let temp = allData;
-            if (currentCategoryFilter !== 'all') {
-                temp = temp.filter(item => (item.category || '').trim() === currentCategoryFilter);
-            }
-            if (currentTimelinessFilter !== 'all') {
-                temp = temp.filter(item => parseList(item.timeliness).includes(currentTimelinessFilter));
-            }
-            if (currentHierarchyFilter !== 'all') {
-                temp = temp.filter(item => parseList(item.legal_hierarchy).includes(currentHierarchyFilter));
-            }
-            if (currentTagFilter) {
-                temp = temp.filter(item => parseList(item.subject_tags).includes(currentTagFilter));
-            }
-            if (searchTerm) {
-                temp = temp.filter(item => {
-                    const title = (item.title || '').toLowerCase();
-                    const category = (item.category || '').toLowerCase();
-                    const date = (item.publish_date || '').toLowerCase();
-                    const authority = (item.issuing_authority || '').toLowerCase();
-                    const hierarchy = (item.legal_hierarchy || '').toLowerCase();
-                    const documentNo = (item.document_no || '').toLowerCase();
-                    const subjectTags = (item.subject_tags || '').toLowerCase();
-                    return title.includes(searchTerm) || category.includes(searchTerm) ||
-                           date.includes(searchTerm) || authority.includes(searchTerm) ||
-                           hierarchy.includes(searchTerm) || documentNo.includes(searchTerm) ||
-                           subjectTags.includes(searchTerm);
-                });
-            }
+            let temp = allData.filter(item => passesFilters(item, searchTerm, null));
+            // 联动计数：位阶/机关下拉的选项与计数随其他筛选实时收窄
+            updateFacetOptions('hierarchySelect', 'legal_hierarchy', currentHierarchyFilter, '全部位阶', searchTerm, 'hierarchy');
+            updateFacetOptions('authoritySelect', 'issuing_authority', currentAuthorityFilter, '全部机关', searchTerm, 'authority');
 
             // 2. Sort
             if (currentSort.column) {
@@ -1292,21 +1311,6 @@
             applyFilterAndSort();
         }
 
-        function getCategoryBadgeClass(key) {
-            // CSV stores Chinese category names; map them to badge classes
-            const chineseMap = {
-                '中央法规': 'central',
-                '地方法规': 'local',
-                '立法资料': 'legislative_materials',
-                '法规解读': 'legislative_interpretations',
-                '法律动态': 'legal_updates'
-            };
-            // Accept both Chinese names (from CSV) and English keys
-            const normalised = chineseMap[key] || key;
-            const known = ['central','local','legislative_materials','legislative_interpretations','legal_updates'];
-            return known.includes(normalised) ? `badge-${normalised}` : 'badge-default';
-        }
-
         function renderTable() {
             const tbody = document.getElementById('tableBody');
             tbody.innerHTML = '';
@@ -1331,9 +1335,6 @@
 
             const highlightTerm = document.getElementById('searchInput').value.trim();
             pageData.forEach(row => {
-                const categoryKey = (row.category || '').toLowerCase();
-                const categoryText = categoryMap[categoryKey] || row.category || '-';
-                const badgeClass = getCategoryBadgeClass(categoryKey);
                 const rowKey = row.url || row.title;
                 const isExpanded = expandedRows.has(rowKey);
                 const tr = document.createElement('tr');
@@ -1362,7 +1363,7 @@
                     : '';
                 tr.innerHTML = `
                     <td class="cell-title">${titleCellHtml}${newBadgeHtml}${pendingBadgeHtml}${tagPillsHtml}</td>
-                    <td><span class="cell-label">分类</span><span class="badge ${badgeClass}">${escapeHtml(categoryText)}</span></td>
+                    <td class="col-docno"><span class="cell-label">发文字号</span><span>${escapeHtml(row.document_no) || '-'}</span></td>
                     <td class="col-date"><span class="cell-label">公布日期</span><span>${escapeHtml(row.publish_date) || '-'}${effectiveDateHtml}</span></td>
                     <td class="col-authority"><span class="cell-label">制定机关</span><span>${escapeHtml(row.issuing_authority) || '-'}</span></td>
                     <td class="col-hierarchy"><span class="cell-label">效力位阶</span><span>${escapeHtml(row.legal_hierarchy) || '-'}</span></td>
@@ -1395,7 +1396,6 @@
                                 <div class="detail-item"><span class="detail-label">效力位阶</span><span>${escapeHtml(row.legal_hierarchy) || '—'}</span></div>
                                 <div class="detail-item"><span class="detail-label">公布日期</span><span>${escapeHtml(row.publish_date) || '—'}</span></div>
                                 <div class="detail-item"><span class="detail-label">施行日期</span><span>${escapeHtml(row.effective_date) || '—'}</span></div>
-                                <div class="detail-item"><span class="detail-label">分类</span><span class="badge ${badgeClass}">${escapeHtml(categoryText)}</span></div>
                                 <div class="detail-item"><span class="detail-label">发文字号</span><span>${escapeHtml(row.document_no) || '—'}</span></div>
                                 <div class="detail-item"><span class="detail-label">时效性</span><span>${escapeHtml(row.timeliness) || '—'}</span></div>
                                 <div class="detail-item"><span class="detail-label">主题标签</span><span class="tag-pills" style="margin-top:0;">${allTagsHtml}</span></div>
