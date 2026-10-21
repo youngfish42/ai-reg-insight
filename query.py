@@ -1172,7 +1172,10 @@ def _split_span_into_chunks(start: date, end: date) -> List[tuple]:
             chunk_end = min(date(cur.year, 12, 31), end)
             chunks.append((cur, chunk_end))
             cur = chunk_end + timedelta(days=1)
-        return chunks
+        if len(chunks) > 1:
+            return chunks
+        # 单块等于原跨度（阈值小于一年时同一年内可能出现）：退化为下一级粒度，
+        # 避免拆分不产生进展导致死循环
     if (start.year, start.month) != (end.year, end.month):
         chunks = []
         cur = start
