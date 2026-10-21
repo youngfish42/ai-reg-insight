@@ -1115,11 +1115,13 @@ def _mcp_call_get_law_list(
     start_date: str,
     end_date: str,
     field: str = "title",
-) -> List[dict]:
+) -> tuple:
     """调用 get_law_list 工具检索法规列表（服务端单次上限 20 条、按相关度排序）。
 
     field 为 'title'（标题关键词）或 'fulltext'（正文关键词）；
-    必须传入施行日期范围，否则当月新法规会被历史高相关度条目挤出前 20 条（实测 0/20）。"""
+    必须传入施行日期范围，否则当月新法规会被历史高相关度条目挤出前 20 条（实测 0/20）。
+    返回 (条目列表, Total)。Total 为服务端返回的窗口命中总数（可能超过 20 条上限），
+    用于按比例拆分日期窗；响应缺少该字段时为 None（退化为盲目二分）。"""
     arguments = {
         field: keyword,
         "timeliness": MCP_TIMELINESS,
@@ -1147,12 +1149,15 @@ def _mcp_call_get_law_list(
                 payload = json.loads(c.get("text") or "{}")
                 break
     if not isinstance(payload, dict):
-        return []
+        return [], None
     data = payload.get("Data")
     if not isinstance(data, list):
         print(f"WARNING: MCP 返回无数据（Message={payload.get('Message', '?')}）")
-        return []
-    return data
+        return [], None
+    total = payload.get("Total")
+    if not isinstance(total, int) or total < 0:
+        total = None
+    return data, total
 
 
 def _split_span_into_chunks(start: date, end: date) -> List[tuple]:
@@ -1181,6 +1186,25 @@ def _split_span_into_chunks(start: date, end: date) -> List[tuple]:
     return [(start, mid), (mid + timedelta(days=1), end)]
 
 
+def _split_span_by_count(start: date, end: date, k: int) -> List[tuple]:
+    """按命中总数把日期跨度均分为 k 个连续子区间（每个至少 1 天，升序返回）。
+
+    用于服务端返回真实总数（Total）时的按比例拆分：k = ceil(Total / 20)，
+    均匀分布假设下每个子区间直接低于 20 条上限；分布不均时子区间带各自
+    Total 继续递归拆分。"""
+    days = (end - start).days + 1
+    k = max(2, min(k, days))
+    base, extra = divmod(days, k)
+    chunks = []
+    cur = start
+    for i in range(k):
+        size = base + (1 if i < extra else 0)
+        chunk_end = cur + timedelta(days=size - 1)
+        chunks.append((cur, chunk_end))
+        cur = chunk_end + timedelta(days=1)
+    return chunks
+
+
 def _mcp_search_span(
     token: str,
     keyword: str,
@@ -1191,9 +1215,13 @@ def _mcp_search_span(
 ) -> tuple:
     """对任意日期跨度做先粗后细的自适应拆分检索，规避服务端 20 条上限。
 
-    从整段窗口开始，凡命中 20 条上限（结果可能被截断）的窗口按
-    _split_span_into_chunks 的粒度阶梯（年→月→日二分）拆细重查，
-    最小粒度为天（单日超过 20 条时接受截断）。空跨度一次调用即可整段覆盖。
+    从整段窗口开始，凡命中 20 条上限（结果可能被截断）的窗口拆细重查：
+    服务端返回真实总数（Total）时，同月窗口按 ceil(Total/20) 等日子区间拆分
+    （分布不均的子区间带各自 Total 继续递归）；跨月窗口取「等日拆分块数」与
+    「日历阶梯块数」中更小的一种扇出（稀疏分布等日拆分省掉空块探测，
+    聚集分布日历阶梯避免稀疏段超宽块）。Total 缺失时退化为
+    _split_span_into_chunks 的粒度阶梯（年→月→日二分）。最小粒度为天
+    （单日超过 20 条时接受截断）。空跨度一次调用即可整段覆盖。
     栈式处理保证较新的子区间优先（与倒序回填一致）。命中上限被拆分的父窗口，
     其返回的条目仍保留进结果（下游按 URL/标题去重）。调用间隔 MCP_CALL_DELAY_S。
     max_calls 限制本次检索的最大调用次数（回填模式按剩余积分预算收紧）。
@@ -1216,17 +1244,37 @@ def _mcp_search_span(
         win_start, win_end = stack.pop()
         start_date = f"{win_start.year}.{win_start.month}.{win_start.day}"
         end_date = f"{win_end.year}.{win_end.month}.{win_end.day}"
-        data = _mcp_call_get_law_list(token, keyword, start_date, end_date, field)
+        data, total = _mcp_call_get_law_list(token, keyword, start_date, end_date, field)
         calls += 1
         time.sleep(MCP_CALL_DELAY_S)
         items.extend(data)
+        if total and len(data) >= total:
+            # Total 为窗口真实总数且已取回全部条目（含恰好 20 条的边界），
+            # 窗口确定完整覆盖，无需再拆
+            covered.append((win_start, win_end))
+            continue
         if len(data) >= 20 and win_end > win_start:
-            chunks = _split_span_into_chunks(win_start, win_end)
+            if total and total > 20:
+                # Total 为窗口真实总数：同月窗口按 ceil(Total/20) 等日拆分（分布较均匀，
+                # 优于盲目二分）；跨月窗口比较两种扇出的预期调用量——等日拆分块数更少
+                # 时用等日拆分（稀疏分布，日历阶梯会产生大量空块探测），否则用日历阶梯
+                # （聚集分布，等日拆分在稀疏段会产生大量超宽块）
+                count_k = -(-total // 20)
+                if (win_start.year, win_start.month) == (win_end.year, win_end.month):
+                    chunks = _split_span_by_count(win_start, win_end, count_k)
+                else:
+                    ladder = _split_span_into_chunks(win_start, win_end)
+                    if count_k < len(ladder):
+                        chunks = _split_span_by_count(win_start, win_end, count_k)
+                    else:
+                        chunks = ladder
+            else:
+                chunks = _split_span_into_chunks(win_start, win_end)
             # 升序压栈，栈顶为最新子区间（最新优先处理）
             stack.extend(chunks)
             print(
-                f"DEBUG: {field} 窗口 {start_date}~{end_date} 命中上限 20 条，"
-                f"拆分为 {len(chunks)} 个子区间后继续"
+                f"DEBUG: {field} 窗口 {start_date}~{end_date} 命中上限 20 条"
+                f"（Total={total}），拆分为 {len(chunks)} 个子区间后继续"
             )
             continue
         if len(data) >= 20:
