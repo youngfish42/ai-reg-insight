@@ -11,7 +11,7 @@ import unicodedata
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, asdict
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, List, Optional
 
@@ -45,6 +45,8 @@ MCP_TIMELINESS = ["现行有效", "尚未施行"]
 MCP_CALL_DELAY_S = 0.3
 # 每个检索字段（标题/全文）在自适应日期窗拆分下的最大调用次数，防止异常失控
 MCP_MAX_WINDOW_CALLS = 30
+# 大跨度拆分粒度阈值：超过该天数先按日历年对齐拆分，跨月按自然月拆，同月内按日二分
+MCP_SPAN_YEAR_THRESHOLD_DAYS = 400
 # get_law_list 每次调用的大致积分消耗（用于回填模式的预算换算）
 MCP_POINTS_PER_CALL = 25
 # 回填进度状态文件（随仓库提交，记录已完成的 月份|关键词 组合）
@@ -1153,6 +1155,91 @@ def _mcp_call_get_law_list(
     return data
 
 
+def _split_span_into_chunks(start: date, end: date) -> List[tuple]:
+    """把命中 20 条上限的日期跨度拆成子区间（升序返回）。
+
+    粒度阶梯：超过 MCP_SPAN_YEAR_THRESHOLD_DAYS 天先按日历年对齐拆分；
+    跨月按自然月拆；同月内按日二分。子区间并集恰好等于原跨度。"""
+    if (end - start).days > MCP_SPAN_YEAR_THRESHOLD_DAYS:
+        chunks = []
+        cur = start
+        while cur <= end:
+            chunk_end = min(date(cur.year, 12, 31), end)
+            chunks.append((cur, chunk_end))
+            cur = chunk_end + timedelta(days=1)
+        return chunks
+    if (start.year, start.month) != (end.year, end.month):
+        chunks = []
+        cur = start
+        while cur <= end:
+            last_day = calendar.monthrange(cur.year, cur.month)[1]
+            chunk_end = min(date(cur.year, cur.month, last_day), end)
+            chunks.append((cur, chunk_end))
+            cur = chunk_end + timedelta(days=1)
+        return chunks
+    mid = start + timedelta(days=(end - start).days // 2)
+    return [(start, mid), (mid + timedelta(days=1), end)]
+
+
+def _mcp_search_span(
+    token: str,
+    keyword: str,
+    start: date,
+    end: date,
+    field: str,
+    max_calls: int = MCP_MAX_WINDOW_CALLS,
+) -> tuple:
+    """对任意日期跨度做先粗后细的自适应拆分检索，规避服务端 20 条上限。
+
+    从整段窗口开始，凡命中 20 条上限（结果可能被截断）的窗口按
+    _split_span_into_chunks 的粒度阶梯（年→月→日二分）拆细重查，
+    最小粒度为天（单日超过 20 条时接受截断）。空跨度一次调用即可整段覆盖。
+    栈式处理保证较新的子区间优先（与倒序回填一致）。命中上限被拆分的父窗口，
+    其返回的条目仍保留进结果（下游按 URL/标题去重）。调用间隔 MCP_CALL_DELAY_S。
+    max_calls 限制本次检索的最大调用次数（回填模式按剩余积分预算收紧）。
+    返回 (原始条目列表, 实际调用次数, 是否因 max_calls 截断而未查完,
+    已完整解析的 (start_date, end_date) 区间列表, 截断时剩余未查的窗口列表)。
+    已解析区间互不相交，且与剩余窗口的并集等于请求跨度，可直接入覆盖账本。"""
+    items: List[dict] = []
+    calls = 0
+    covered: List[tuple] = []
+    truncated = False
+    stack = [(start, end)]
+    while stack:
+        if calls >= max_calls:
+            truncated = True
+            print(
+                f"WARNING: {field} 检索已达最大调用次数 {max_calls}，"
+                f"剩余 {len(stack)} 个日期窗未查，结果可能不全。"
+            )
+            break
+        win_start, win_end = stack.pop()
+        start_date = f"{win_start.year}.{win_start.month}.{win_start.day}"
+        end_date = f"{win_end.year}.{win_end.month}.{win_end.day}"
+        data = _mcp_call_get_law_list(token, keyword, start_date, end_date, field)
+        calls += 1
+        time.sleep(MCP_CALL_DELAY_S)
+        items.extend(data)
+        if len(data) >= 20 and win_end > win_start:
+            chunks = _split_span_into_chunks(win_start, win_end)
+            # 升序压栈，栈顶为最新子区间（最新优先处理）
+            stack.extend(chunks)
+            print(
+                f"DEBUG: {field} 窗口 {start_date}~{end_date} 命中上限 20 条，"
+                f"拆分为 {len(chunks)} 个子区间后继续"
+            )
+            continue
+        if len(data) >= 20:
+            # 单日仍命中上限：无法再拆，属服务端 20 条硬上限的固有损耗，接受截断
+            print(f"WARNING: {field} 单日 {start_date} 结果超过 20 条上限，已接受截断。")
+        covered.append((win_start, win_end))
+
+    print(f"MCP {field} 检索: 关键词 '{keyword}' 共 {calls} 次调用，返回 {len(items)} 条原始结果")
+    # 剩余窗口按处理顺序（最新优先）返回，供回填模式截断后同次运行内续扫
+    remaining = list(reversed(stack)) if truncated else []
+    return items, calls, truncated, covered, remaining
+
+
 def _mcp_search_month(
     token: str,
     keyword: str,
@@ -1164,48 +1251,19 @@ def _mcp_search_month(
 ) -> tuple:
     """对目标月份（可限定日区间）做自适应日期窗拆分检索，规避服务端 20 条上限。
 
-    从整月窗口开始，凡命中 20 条上限（结果可能被截断）的窗口二分拆分后重查，
-    最小粒度为天（单日超过 20 条时接受截断）。调用间隔 MCP_CALL_DELAY_S。
-    max_calls 限制本月的最大调用次数（回填模式按剩余积分预算收紧）。
-    返回 (原始条目列表, 实际调用次数, 是否因 max_calls 截断而未查完, 已完整解析的日区间列表)。
-    已解析区间互不相交，且与剩余未查窗口的并集等于请求范围，可直接入覆盖账本。"""
+    委托 _mcp_search_span（同月跨度按日二分，行为与原月内拆分一致），
+    返回 (原始条目列表, 实际调用次数, 是否因 max_calls 截断而未查完,
+    已完整解析的月内日区间 [[d1, d2], ...] 列表)，可直接入覆盖账本。"""
     year, month = (int(part) for part in month_prefix.split("."))
     last_day = calendar.monthrange(year, month)[1]
     if day_end is None or day_end > last_day:
         day_end = last_day
-
-    items: List[dict] = []
-    calls = 0
-    windows = [(day_start, day_end)]
-    covered: List[list] = []
-    truncated = False
-    while windows:
-        if calls >= max_calls:
-            truncated = True
-            print(
-                f"WARNING: {field} 检索已达最大调用次数 {max_calls}，"
-                f"剩余 {len(windows)} 个日期窗未查，结果可能不全。"
-            )
-            break
-        day_start, day_end = windows.pop()
-        start_date = f"{year}.{month}.{day_start}"
-        end_date = f"{year}.{month}.{day_end}"
-        data = _mcp_call_get_law_list(token, keyword, start_date, end_date, field)
-        calls += 1
-        time.sleep(MCP_CALL_DELAY_S)
-        if len(data) >= 20 and day_end > day_start:
-            mid = (day_start + day_end) // 2
-            windows.append((day_start, mid))
-            windows.append((mid + 1, day_end))
-            print(f"DEBUG: {field} 窗口 {start_date}~{end_date} 命中上限 20 条，拆分后继续")
-            continue
-        if len(data) >= 20:
-            # 单日仍命中上限：无法再拆，属服务端 20 条硬上限的固有损耗，接受截断
-            print(f"WARNING: {field} 单日 {start_date} 结果超过 20 条上限，已接受截断。")
-        items.extend(data)
-        covered.append([day_start, day_end])
-
-    print(f"MCP {field} 检索: 关键词 '{keyword}' 共 {calls} 次调用，返回 {len(items)} 条原始结果")
+    items, calls, truncated, covered_dates, _ = _mcp_search_span(
+        token, keyword,
+        date(year, month, day_start), date(year, month, day_end),
+        field, max_calls,
+    )
+    covered = [[s.day, e.day] for s, e in covered_dates]
     return items, calls, truncated, covered
 
 
@@ -1456,6 +1514,31 @@ def _complement_intervals(covered, last_day: int) -> List[list]:
     return out
 
 
+def _uncovered_spans(coverage: dict, keyword: str, start_month: str, end_month: str) -> List[tuple]:
+    """汇总 [start_month, end_month] 内该关键词未覆盖的日期区间。
+
+    各月补集（_complement_intervals）跨月合并相邻区间为最大连续
+    (start_date, end_date) 跨度，倒序返回（最新优先，与倒序回填一致）。"""
+    spans: List[tuple] = []
+    cur_start: Optional[date] = None
+    cur_end: Optional[date] = None
+    for month_prefix in reversed(_month_range_desc(start_month, end_month)):
+        year, month = (int(p) for p in month_prefix.split("."))
+        last_day = calendar.monthrange(year, month)[1]
+        covered = coverage.get(month_prefix, {}).get(keyword, [])
+        for d1, d2 in _complement_intervals(covered, last_day):
+            s, e = date(year, month, d1), date(year, month, d2)
+            if cur_start is not None and s == cur_end + timedelta(days=1):
+                cur_end = e
+            else:
+                if cur_start is not None:
+                    spans.append((cur_start, cur_end))
+                cur_start, cur_end = s, e
+    if cur_start is not None:
+        spans.append((cur_start, cur_end))
+    return list(reversed(spans))
+
+
 def _load_backfill_state(path: Path) -> dict:
     """读取覆盖账本 {month: {keyword: [[d1,d2],...]}}；兼容旧版 {"scanned":[...]} 并迁移为整月覆盖。"""
     if not path.exists():
@@ -1512,6 +1595,50 @@ def _definitive_interval(
     return [day_start, end]
 
 
+def _record_coverage_dates(coverage: dict, keyword: str, intervals, today: datetime) -> None:
+    """把 (start_date, end_date) 覆盖区间按月切片后入账。
+
+    每片经 _definitive_interval 过滤（历史月份整段确定覆盖；跨到当月时
+    仅截至扫描日的部分入账）。"""
+    for s, e in intervals:
+        cur = s
+        while cur <= e:
+            last_day = calendar.monthrange(cur.year, cur.month)[1]
+            month_end = min(date(cur.year, cur.month, last_day), e)
+            month_prefix = f"{cur.year}.{cur.month:02d}"
+            iv = _definitive_interval(month_prefix, cur.day, month_end.day, today)
+            if iv:
+                _record_coverage(coverage, month_prefix, keyword, [iv])
+            cur = month_end + timedelta(days=1)
+
+
+def _backfill_write_and_filter(
+    out_jsonl: Path,
+    title_items: List[dict],
+    fulltext_items: List[dict],
+    keyword: str,
+    month_prefixes,
+) -> List[Record]:
+    """回填扫描后处理：原始条目落盘 JSONL（断点续扫时已落盘数据不丢），
+    派生 Record 并按目标月份集合过滤；标题二次过滤只约束标题来源，
+    仅正文命中的记录直接保留。"""
+    write_mcp_jsonl(
+        out_jsonl,
+        [_with_mcp_meta(it, keyword, "title") for it in title_items]
+        + [_with_mcp_meta(it, keyword, "fulltext") for it in fulltext_items],
+    )
+    records = _records_from_mcp_items(title_items + fulltext_items, month_prefixes)
+    records = deduplicate_records_by_title(records)
+    title_keys = {
+        title_dedup_key((it.get("Title") or "").strip())
+        for it in title_items
+    }
+    title_sourced = [r for r in records if title_dedup_key(r.title) in title_keys]
+    fulltext_only = [r for r in records if title_dedup_key(r.title) not in title_keys]
+    title_sourced = filter_records_by_keywords(title_sourced, [keyword])
+    return deduplicate_records_by_title(title_sourced + fulltext_only)
+
+
 def run_mcp_backfill(
     keywords: List[str],
     start_month: str,
@@ -1522,12 +1649,17 @@ def run_mcp_backfill(
     state_path: Path = MCP_BACKFILL_STATE_PATH,
     refresh: bool = False,
 ) -> None:
-    """按积分预算回填漏扫的法规（当月补漏优先，随后 start_month 起的历史月份倒序）。
+    """按积分预算回填漏扫的法规（当月补漏优先，随后 start_month 起的历史区间）。
 
+    当月沿用逐日区间补漏（与每日任务粒度一致）；历史区间按关键词把各月未覆盖
+    补集跨月合并为大跨度，用 _mcp_search_span 先粗后细自适应拆分（空跨度一次
+    调用即可整段覆盖，热点区域自动拆到月/日粒度），稀疏早期年份不再逐月空查。
     原始结果逐段落盘 JSONL，回填结束后统一派生融合进 法规.csv。
     覆盖账本（state 文件，随仓库提交）记录每个 月份×关键词 已确定覆盖的日区间，
-    回填只扫未覆盖的补集窗口；每段扫描成功即时入账，断点续扫粒度精确到日区间。
-    refresh=True 时忽略覆盖账本、全月重扫（用于用富字段原地富化历史数据），
+    回填只扫未覆盖的补集窗口；已解析区间即时入账，断点续扫粒度精确到日区间。
+    被 max_calls/预算截断的跨度，剩余未查窗口在同次运行内优先续扫（不再整体中止，
+    避免单个高热组合永久阻塞后续关键词）。
+    refresh=True 时忽略覆盖账本、全量重扫（用于用富字段原地富化历史数据），
     扫描成功后仍照常记账。
     points_budget=0 表示不限预算，直到积分耗尽（McpUnavailableError 时优雅停止）。"""
     _migrate_mcp_csv_to_jsonl(MCP_LEGACY_CSV_PATH, MCP_JSONL_DEFAULT_PATH)
@@ -1541,13 +1673,10 @@ def run_mcp_backfill(
     prev_year, prev_month = (now.year - 1, 12) if now.month == 1 else (now.year, now.month - 1)
     prev_month_prefix = f"{prev_year}.{prev_month:02d}"
 
-    # 回填范围：当月（每日增量可能因缺积分产生空洞，最优先）+ start_month ~ 上月（倒序）
-    months: List[str] = []
-    if start_month <= current_month:
-        months.append(current_month)
-    if start_month <= prev_month_prefix:
-        months += _month_range_desc(start_month, prev_month_prefix)
-    if not months:
+    # 回填范围：当月（每日增量可能因缺积分产生空洞，最优先）+ start_month ~ 上月
+    has_current = start_month <= current_month
+    has_history = start_month <= prev_month_prefix
+    if not has_current and not has_history:
         print(f"回填范围为空（起始月份 {start_month} 晚于当月 {current_month}），无需回填。")
         return
 
@@ -1557,9 +1686,16 @@ def run_mcp_backfill(
         print("积分预算: 不限（持续到积分耗尽为止，进度实时保存）")
     else:
         print(f"积分预算 {points_budget} ≈ {budget_calls} 次检索调用（约 {MCP_POINTS_PER_CALL} 积分/次）")
-    print(f"回填范围: 当月补漏 + {start_month} ~ {prev_month_prefix}，共 {len(months)} 个月 × {len(keywords)} 个关键词")
+    if has_history:
+        hist_months = len(_month_range_desc(start_month, prev_month_prefix))
+        print(
+            f"回填范围: 当月补漏 + {start_month} ~ {prev_month_prefix}，共 {hist_months} 个月 × "
+            f"{len(keywords)} 个关键词（历史区间按关键词合并为大跨度自适应拆分）"
+        )
+    else:
+        print(f"回填范围: 仅当月补漏，{len(keywords)} 个关键词")
     if refresh:
-        print("refresh 模式：忽略覆盖账本，全月重扫（成功后照常记账）")
+        print("refresh 模式：忽略覆盖账本，全量重扫（成功后照常记账）")
 
     try:
         _mcp_handshake(token)
@@ -1569,15 +1705,26 @@ def run_mcp_backfill(
     except Exception as e:
         print(f"WARNING: MCP 连接失败: {e}，本次回填未开始。")
         return
+
     calls_used = 0
     stop = False
-    for month_prefix in months:
-        if stop:
-            break
-        year, mo = (int(p) for p in month_prefix.split("."))
-        last_day = calendar.monthrange(year, mo)[1]
+
+    def _next_cap() -> int:
+        """本次扫描的调用上限（按剩余积分预算收紧）；预算耗尽时置 stop 并返回 0。"""
+        nonlocal stop
+        if budget_calls is None:
+            return MCP_MAX_WINDOW_CALLS
+        remaining = budget_calls - calls_used
+        if remaining <= 0:
+            stop = True
+            return 0
+        return min(MCP_MAX_WINDOW_CALLS, remaining)
+
+    # 阶段一：当月补漏（逐日区间，与每日任务粒度一致，最优先）
+    if has_current:
+        year, mo = (int(p) for p in current_month.split("."))
         # 当月只补“确定可覆盖”的部分（截至今天）；未来日期由每日任务捕获
-        effective_last = min(last_day, now.day) if month_prefix == current_month else last_day
+        effective_last = min(calendar.monthrange(year, mo)[1], now.day)
         for kw in keywords:
             if stop:
                 break
@@ -1585,40 +1732,28 @@ def run_mcp_backfill(
                 [[1, effective_last]]
                 if refresh
                 else _complement_intervals(
-                    coverage.get(month_prefix, {}).get(kw, []), effective_last
+                    coverage.get(current_month, {}).get(kw, []), effective_last
                 )
             )
-            if not todo:
-                continue
             for d1, d2 in todo:
-                if budget_calls is not None:
-                    remaining = budget_calls - calls_used
-                    if remaining <= 0:
-                        stop = True
-                        break
-                    cap = min(MCP_MAX_WINDOW_CALLS, remaining)
-                else:
-                    cap = MCP_MAX_WINDOW_CALLS
-                print(f"回填 {month_prefix} [{d1}-{d2}] 关键词 '{kw}'...")
+                cap = _next_cap()
+                if cap <= 0:
+                    break
+                print(f"回填 {current_month} [{d1}-{d2}] 关键词 '{kw}'...")
                 try:
                     title_items, calls, truncated, covered = _mcp_search_month(
-                        token, kw, month_prefix, "title",
+                        token, kw, current_month, "title",
                         max_calls=cap, day_start=d1, day_end=d2,
                     )
                     calls_used += calls
                     fulltext_items: List[dict] = []
                     if fulltext and not truncated:
-                        if budget_calls is None:
-                            cap = MCP_MAX_WINDOW_CALLS
-                        else:
-                            remaining = budget_calls - calls_used
-                            cap = min(MCP_MAX_WINDOW_CALLS, remaining)
-                        if cap > 0:
-                            ft_items, calls, _, _ = _mcp_search_month(
-                                token, kw, month_prefix, "fulltext",
-                                max_calls=cap, day_start=d1, day_end=d2,
+                        ft_cap = _next_cap()
+                        if ft_cap > 0:
+                            fulltext_items, calls, _, _ = _mcp_search_month(
+                                token, kw, current_month, "fulltext",
+                                max_calls=ft_cap, day_start=d1, day_end=d2,
                             )
-                            fulltext_items = ft_items
                             calls_used += calls
                 except McpUnavailableError as e:
                     print(f"MCP 不可用（积分不足或授权问题）: {e}")
@@ -1629,48 +1764,99 @@ def run_mcp_backfill(
                     stop = True
                     break
 
-                # 原始 items 逐段落盘 JSONL（断点续扫时已落盘数据不丢）
-                write_mcp_jsonl(
-                    out_jsonl,
-                    [_with_mcp_meta(it, kw, "title") for it in title_items]
-                    + [_with_mcp_meta(it, kw, "fulltext") for it in fulltext_items],
+                records = _backfill_write_and_filter(
+                    out_jsonl, title_items, fulltext_items, kw, current_month
                 )
-
-                records = _records_from_mcp_items(title_items + fulltext_items, month_prefix)
-                records = deduplicate_records_by_title(records)
-                # 标题二次过滤只约束标题来源；仅正文命中的记录直接保留
-                title_keys = {
-                    title_dedup_key((it.get("Title") or "").strip())
-                    for it in title_items
-                }
-                title_sourced = [r for r in records if title_dedup_key(r.title) in title_keys]
-                fulltext_only = [r for r in records if title_dedup_key(r.title) not in title_keys]
-                title_sourced = filter_records_by_keywords(title_sourced, [kw])
-                records = deduplicate_records_by_title(title_sourced + fulltext_only)
 
                 if truncated:
                     # 调用上限导致该窗口未扫完：结果已落盘，已解析的日区间即时入账，
-                    # 剩余补集窗口由下次触发的 _complement_intervals 续扫（不再整体中止，
-                    # 避免单个高热组合永久阻塞后续关键词/月份）。
+                    # 剩余补集窗口由下次触发的 _complement_intervals 续扫。
                     partial = []
                     for s, e in covered:
-                        iv = _definitive_interval(month_prefix, s, e, now)
+                        iv = _definitive_interval(current_month, s, e, now)
                         if iv:
                             partial.append(iv)
                     if partial:
-                        _record_coverage(coverage, month_prefix, kw, partial)
+                        _record_coverage(coverage, current_month, kw, partial)
                         _save_backfill_state(state_path, coverage)
                     print(
-                        f"WARNING: {month_prefix} [{d1}-{d2}] '{kw}' 未扫完，"
+                        f"WARNING: {current_month} [{d1}-{d2}] '{kw}' 未扫完，"
                         f"已入账 {len(partial)} 个已解析日区间，剩余窗口留待下次续扫。"
                     )
                     continue
-                iv = _definitive_interval(month_prefix, d1, d2, now)
+                iv = _definitive_interval(current_month, d1, d2, now)
                 if iv:
-                    _record_coverage(coverage, month_prefix, kw, [iv])
+                    _record_coverage(coverage, current_month, kw, [iv])
                     _save_backfill_state(state_path, coverage)
                 print(
-                    f"回填 {month_prefix} [{d1}-{d2}] '{kw}': +{len(records)} 条"
+                    f"回填 {current_month} [{d1}-{d2}] '{kw}': +{len(records)} 条"
+                    f"（累计调用 {calls_used} 次 ≈ {calls_used * MCP_POINTS_PER_CALL} 积分）"
+                )
+
+    # 阶段二：历史区间（按关键词把未覆盖补集跨月合并为大跨度，先粗后细自适应拆分）
+    if has_history and not stop:
+        sy, sm = (int(p) for p in start_month.split("."))
+        hist_start = date(sy, sm, 1)
+        hist_end = date(prev_year, prev_month, calendar.monthrange(prev_year, prev_month)[1])
+        for kw in keywords:
+            if stop:
+                break
+            if refresh:
+                # refresh 忽略账本：全历史跨度作为单一初始窗口（拆分由检索层负责）
+                queue: List[tuple] = [(hist_start, hist_end)]
+            else:
+                queue = _uncovered_spans(coverage, kw, start_month, prev_month_prefix)
+            while queue and not stop:
+                span_start, span_end = queue.pop(0)
+                cap = _next_cap()
+                if cap <= 0:
+                    break
+                span_label = (
+                    f"{span_start.year}.{span_start.month:02d}.{span_start.day:02d} ~ "
+                    f"{span_end.year}.{span_end.month:02d}.{span_end.day:02d}"
+                )
+                print(f"回填 {span_label} 关键词 '{kw}'...")
+                try:
+                    title_items, calls, truncated, covered, remaining = _mcp_search_span(
+                        token, kw, span_start, span_end, "title", max_calls=cap,
+                    )
+                    calls_used += calls
+                    fulltext_items = []
+                    if fulltext and not truncated:
+                        ft_cap = _next_cap()
+                        if ft_cap > 0:
+                            fulltext_items, calls, _, _ = _mcp_search_span(
+                                token, kw, span_start, span_end, "fulltext", max_calls=ft_cap,
+                            )
+                            calls_used += calls
+                except McpUnavailableError as e:
+                    print(f"MCP 不可用（积分不足或授权问题）: {e}")
+                    stop = True
+                    break
+                except Exception as e:
+                    print(f"WARNING: MCP 调用失败: {e}")
+                    stop = True
+                    break
+
+                span_months = _month_range_desc(
+                    f"{span_start.year}.{span_start.month:02d}",
+                    f"{span_end.year}.{span_end.month:02d}",
+                )
+                records = _backfill_write_and_filter(
+                    out_jsonl, title_items, fulltext_items, kw, span_months
+                )
+                # 已解析区间即时入账（按月切片）；截断时剩余窗口插回队首同次续扫
+                if covered:
+                    _record_coverage_dates(coverage, kw, covered, now)
+                    _save_backfill_state(state_path, coverage)
+                if truncated:
+                    queue = list(remaining) + queue
+                    print(
+                        f"WARNING: 跨度 {span_label} '{kw}' 未扫完，"
+                        f"已入账 {len(covered)} 个已解析区间，剩余 {len(remaining)} 个窗口续扫。"
+                    )
+                print(
+                    f"回填 {span_label} '{kw}': +{len(records)} 条"
                     f"（累计调用 {calls_used} 次 ≈ {calls_used * MCP_POINTS_PER_CALL} 积分）"
                 )
 
