@@ -1155,7 +1155,8 @@ def _mcp_call_get_law_list(
         print(f"WARNING: MCP 返回无数据（Message={payload.get('Message', '?')}）")
         return [], None
     total = payload.get("Total")
-    if not isinstance(total, int) or total < 0:
+    # type 判断排除 bool（isinstance(True, int) 为真）；负数/缺失一律视为不可用
+    if type(total) is not int or total < 0:
         total = None
     return data, total
 
@@ -1195,6 +1196,8 @@ def _split_span_by_count(start: date, end: date, k: int) -> List[tuple]:
     用于服务端返回真实总数（Total）时的按比例拆分：k = ceil(Total / 20)，
     均匀分布假设下每个子区间直接低于 20 条上限；分布不均时子区间带各自
     Total 继续递归拆分。"""
+    if end <= start:
+        return [(start, end)]
     days = (end - start).days + 1
     k = max(2, min(k, days))
     base, extra = divmod(days, k)
@@ -1253,11 +1256,14 @@ def _mcp_search_span(
         items.extend(data)
         if total and len(data) >= total:
             # Total 为窗口真实总数且已取回全部条目（含恰好 20 条的边界），
-            # 窗口确定完整覆盖，无需再拆
+            # 窗口确定完整覆盖，无需再拆。前提：Total 口径与 Data 一致
+            #（2026.10 实测 Total=131 > len(Data)=20 验证成立；若服务端改为
+            # 过滤后计数导致 Total 偏小，此处可能误标覆盖，排查时优先怀疑本行）
             covered.append((win_start, win_end))
             continue
         if len(data) >= 20 and win_end > win_start:
-            if total and total > 20:
+            # 走到这里必有 total is None 或 total > len(data) >= 20
+            if total is not None:
                 # Total 为窗口真实总数：同月窗口按 ceil(Total/20) 等日拆分（分布较均匀，
                 # 优于盲目二分）；跨月窗口比较两种扇出的预期调用量——等日拆分块数更少
                 # 时用等日拆分（稀疏分布，日历阶梯会产生大量空块探测），否则用日历阶梯
@@ -1283,6 +1289,12 @@ def _mcp_search_span(
         if len(data) >= 20:
             # 单日仍命中上限：无法再拆，属服务端 20 条硬上限的固有损耗，接受截断
             print(f"WARNING: {field} 单日 {start_date} 结果超过 20 条上限，已接受截断。")
+        elif total is not None and len(data) < total:
+            # Total 与 Data 数量不一致（疑似服务端截断或口径变化），记录告警便于排查
+            print(
+                f"WARNING: {field} 窗口 {start_date}~{end_date} Total={total} "
+                f"但仅返回 {len(data)} 条，按已覆盖处理，结果可能不全。"
+            )
         covered.append((win_start, win_end))
 
     print(f"MCP {field} 检索: 关键词 '{keyword}' 共 {calls} 次调用，返回 {len(items)} 条原始结果")
@@ -1302,7 +1314,8 @@ def _mcp_search_month(
 ) -> tuple:
     """对目标月份（可限定日区间）做自适应日期窗拆分检索，规避服务端 20 条上限。
 
-    委托 _mcp_search_span（同月跨度按日二分，行为与原月内拆分一致），
+    委托 _mcp_search_span：同月窗口在 Total 缺失时按日二分（与原行为一致），
+    Total 可用时按 ceil(Total/20) 等日拆分（更省调用）。
     返回 (原始条目列表, 实际调用次数, 是否因 max_calls 截断而未查完,
     已完整解析的月内日区间 [[d1, d2], ...] 列表)，可直接入覆盖账本。"""
     year, month = (int(part) for part in month_prefix.split("."))
@@ -1314,6 +1327,7 @@ def _mcp_search_month(
         date(year, month, day_start), date(year, month, day_end),
         field, max_calls,
     )
+    # 请求跨度同月，拆分只产生其子区间，covered_dates 必在同一个月内
     covered = [[s.day, e.day] for s, e in covered_dates]
     return items, calls, truncated, covered
 
@@ -1400,6 +1414,11 @@ def _records_from_mcp_items(items: List[dict], month_prefixes) -> List[Record]:
     month_prefixes 为可接受的 'YYYY.MM' 集合（增量扫描跨月时含上月与当月）。"""
     if isinstance(month_prefixes, str):
         month_prefixes = (month_prefixes,)
+    # 大跨度回填时集合可达数百个月，日志只保留摘要避免刷屏
+    if len(month_prefixes) > 3:
+        prefixes_label = f"{month_prefixes[-1]}~{month_prefixes[0]}共{len(month_prefixes)}个月"
+    else:
+        prefixes_label = str(month_prefixes)
     records: List[Record] = []
     for item in items:
         rec = _record_from_mcp_item(item)
@@ -1408,7 +1427,7 @@ def _records_from_mcp_items(items: List[dict], month_prefixes) -> List[Record]:
         # 与浏览器路径一致的“本月”判定：优先施行日期，否则公布日期
         date_to_check = rec.effective_date or rec.publish_date
         if not any(date_to_check.startswith(p) for p in month_prefixes):
-            print(f"DEBUG: 跳过记录 '{rec.title[:40]}' - 日期 {date_to_check} 不在 {month_prefixes} 中")
+            print(f"DEBUG: 跳过记录 '{rec.title[:40]}' - 日期 {date_to_check} 不在 {prefixes_label} 中")
             continue
         records.append(rec)
     return records
