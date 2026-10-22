@@ -363,12 +363,64 @@
             cursor: pointer;
             max-width: 300px;
         }
-        /* 制定机关改为搜索式输入框（datalist 联动建议） */
-        .authority-input {
-            width: 220px;
-            cursor: text;
+        /* 制定机关：可检索下拉（combo）——按钮样式同位阶下拉，面板内含检索框 */
+        .authority-combo { position: relative; }
+        .authority-select {
+            display: inline-flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            min-width: 180px;
+            max-width: 300px;
         }
-        .authority-input::placeholder { color: var(--disabled-color); }
+        .authority-select .combo-caret { flex-shrink: 0; opacity: 0.6; font-size: 0.8em; }
+        .authority-dropdown {
+            position: absolute;
+            top: calc(100% + 4px);
+            left: 0;
+            z-index: 60;
+            width: 340px;
+            max-width: calc(100vw - 40px);
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+            overflow: hidden;
+        }
+        .authority-search {
+            width: 100%;
+            padding: 9px 12px;
+            border: none;
+            border-bottom: 1px solid var(--border-color);
+            box-sizing: border-box;
+            background: transparent;
+            color: var(--text-color);
+            font-size: 14px;
+            outline: none;
+        }
+        .authority-search::placeholder { color: var(--disabled-color); }
+        .authority-options {
+            list-style: none;
+            margin: 0;
+            padding: 4px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .authority-options li {
+            padding: 6px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 10px;
+        }
+        .authority-options li:hover,
+        .authority-options li.option-active { background: var(--header-hover-bg); }
+        .authority-options li.option-selected { color: var(--primary-color); font-weight: 600; }
+        .authority-options .opt-count { color: var(--muted-color); font-size: 0.82em; white-space: nowrap; }
+        .authority-options .opt-hint { color: var(--muted-color); cursor: default; }
         .tag-filter-row[hidden] { display: none; }
 
         /* Search keyword highlight */
@@ -771,10 +823,19 @@
                     <select id="hierarchySelect" class="hierarchy-select" onchange="handleHierarchyFilter()" aria-label="效力位阶筛选">
                         <option value="all">全部位阶</option>
                     </select>
-                    <label class="filter-label" for="authorityInput">制定机关</label>
-                    <input type="text" id="authorityInput" class="hierarchy-select authority-input"
-                           list="authorityList" placeholder="输入机关名，如 国务院" aria-label="制定机关筛选" autocomplete="off">
-                    <datalist id="authorityList"></datalist>
+                    <label class="filter-label" for="authoritySelectBtn">制定机关</label>
+                    <div class="authority-combo">
+                        <button type="button" id="authoritySelectBtn" class="hierarchy-select authority-select"
+                                onclick="toggleAuthorityDropdown()" aria-haspopup="listbox" aria-expanded="false">
+                            <span id="authoritySelectLabel">全部机关</span>
+                            <span class="combo-caret" aria-hidden="true">▾</span>
+                        </button>
+                        <div class="authority-dropdown" id="authorityDropdown" hidden>
+                            <input type="text" id="authoritySearch" class="authority-search"
+                                   placeholder="检索机关名，如 国务院" aria-label="检索制定机关" autocomplete="off">
+                            <ul class="authority-options" id="authorityOptions" role="listbox"></ul>
+                        </div>
+                    </div>
                 </div>
                 <div class="chip-group tag-filter-row" id="tagFilterRow" hidden>
                     <span class="filter-label">标签筛选：</span>
@@ -829,7 +890,7 @@
         let currentCategoryFilter = 'all';
         let currentTimelinessFilter = 'all';
         let currentHierarchyFilter = 'all';
-        let currentAuthorityFilter = ''; // 搜索式输入：机关名子串，空 = 不筛选
+        let currentAuthorityFilter = ''; // 制定机关下拉：精确匹配值（空 = 不筛选）
         let currentTagFilter = '';
         let dataReferenceDate = null; // meta.json 的 updated_at，用于「新」徽章判定
         const expandedRows = new Set(); // keyed by row url, keeps expansion across re-renders
@@ -933,7 +994,7 @@
             if (exclude !== 'hierarchy' && currentHierarchyFilter !== 'all'
                 && !parseList(item.legal_hierarchy).includes(currentHierarchyFilter)) return false;
             if (exclude !== 'authority' && currentAuthorityFilter
-                && !(item.issuing_authority || '').toLowerCase().includes(currentAuthorityFilter.toLowerCase())) return false;
+                && !parseList(item.issuing_authority).includes(currentAuthorityFilter)) return false;
             if (currentTagFilter && !parseList(item.subject_tags).includes(currentTagFilter)) return false;
             if (searchTerm) {
                 const haystack = [
@@ -969,31 +1030,76 @@
             sel.value = currentValue;
         }
 
-        // 制定机关建议列表（datalist）：联动计数取 Top 50，另补充当前输入词命中的机关。
-        // 具体的输入词过滤由浏览器原生 datalist 完成
-        const MAX_AUTH_SUGGESTIONS = 50;
-        const MAX_AUTH_QUERY_MATCHES = 30;
-        function updateAuthoritySuggestions(searchTerm) {
+        // 制定机关可检索下拉（combo）：选项 = 应用除本维度外全部筛选后的机关及计数；
+        // 面板内检索框仅缩小显示范围（不等同于全局搜索），超出渲染上限时提示继续输入
+        const MAX_AUTH_OPTIONS_RENDER = 300;
+        let authorityCountMap = new Map();
+        let authorityActiveIndex = -1;
+
+        function toggleAuthorityDropdown() {
+            const dd = document.getElementById('authorityDropdown');
+            if (dd.hidden) {
+                dd.hidden = false;
+                document.getElementById('authoritySelectBtn').setAttribute('aria-expanded', 'true');
+                authorityActiveIndex = -1;
+                renderAuthorityOptions();
+                const input = document.getElementById('authoritySearch');
+                input.focus();
+                input.select();
+            } else {
+                closeAuthorityDropdown();
+            }
+        }
+
+        function closeAuthorityDropdown() {
+            document.getElementById('authorityDropdown').hidden = true;
+            document.getElementById('authoritySelectBtn').setAttribute('aria-expanded', 'false');
+        }
+
+        function setAuthorityFilter(value) {
+            currentAuthorityFilter = value;
+            currentPage = 1;
+            closeAuthorityDropdown();
+            document.getElementById('authoritySelectBtn').focus();
+            applyFilterAndSort();
+        }
+
+        // 按钮回显：选中值 + 联动计数（计数随其他筛选实时收窄）
+        function syncAuthorityButton() {
+            const label = document.getElementById('authoritySelectLabel');
+            const text = currentAuthorityFilter
+                ? `${currentAuthorityFilter}（${authorityCountMap.get(currentAuthorityFilter) || 0}）`
+                : '全部机关';
+            if (label.textContent !== text) label.textContent = text;
+        }
+
+        function renderAuthorityOptions() {
+            const ul = document.getElementById('authorityOptions');
+            if (!allData.length) { ul.innerHTML = ''; return; }
+            const searchTerm = document.getElementById('searchInput').value.toLowerCase().trim();
             const counts = new Map();
             allData.forEach(row => {
                 if (!passesFilters(row, searchTerm, 'authority')) return;
                 parseList(row.issuing_authority).forEach(v => counts.set(v, (counts.get(v) || 0) + 1));
             });
+            authorityCountMap = counts;
             const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'zh'));
-            const picked = sorted.slice(0, MAX_AUTH_SUGGESTIONS);
-            const q = currentAuthorityFilter.toLowerCase();
-            if (q) {
-                const extra = sorted.filter(([v]) => v.toLowerCase().includes(q)
-                    && !picked.some(p => p[0] === v)).slice(0, MAX_AUTH_QUERY_MATCHES);
-                picked.push(...extra);
+            const q = document.getElementById('authoritySearch').value.trim().toLowerCase();
+            const matched = q ? sorted.filter(([v]) => v.toLowerCase().includes(q)) : sorted;
+            const shown = matched.slice(0, MAX_AUTH_OPTIONS_RENDER);
+            let html = `<li role="option" data-value="" class="${currentAuthorityFilter ? '' : 'option-selected'}">全部机关</li>`;
+            html += shown.map(([v, n]) =>
+                `<li role="option" data-value="${escapeHtml(v)}"` +
+                ` class="${v === currentAuthorityFilter ? 'option-selected' : ''}">` +
+                `<span>${escapeHtml(v)}</span><span class="opt-count">${n}</span></li>`).join('');
+            if (matched.length > shown.length) {
+                html += `<li class="opt-hint">…还有 ${matched.length - shown.length} 个机关未显示，继续输入以缩小范围</li>`;
+            } else if (matched.length === 0) {
+                html += `<li class="opt-hint">无匹配机关</li>`;
             }
-            const html = picked.map(([v, n]) =>
-                `<option value="${escapeHtml(v)}">（${n}）</option>`).join('');
-            const list = document.getElementById('authorityList');
-            if (list.dataset.facetHtml !== html) {
-                list.innerHTML = html;
-                list.dataset.facetHtml = html;
-            }
+            ul.innerHTML = html;
+            if (authorityActiveIndex >= matched.length) authorityActiveIndex = -1;
+            syncAuthorityButton();
         }
 
         function updateChipStates() {
@@ -1020,9 +1126,8 @@
             const hierSel = document.getElementById('hierarchySelect');
             const hierHasValue = Array.from(hierSel.options).some(o => o.value === currentHierarchyFilter);
             hierSel.value = hierHasValue ? currentHierarchyFilter : 'all';
-            // 制定机关输入框（hash 还原时同步显示值）
-            const authInput = document.getElementById('authorityInput');
-            if (authInput.value !== currentAuthorityFilter) authInput.value = currentAuthorityFilter;
+            // 制定机关下拉按钮（hash 还原时同步回显）
+            syncAuthorityButton();
         }
 
         // 默认状态不写 hash，保持首屏 URL 干净
@@ -1071,7 +1176,7 @@
             const hier = params.get('hier');
             currentHierarchyFilter = (hier && hier.length <= 100) ? hier : 'all';
             const auth = params.get('auth');
-            currentAuthorityFilter = (auth && auth.length <= 50) ? auth : '';
+            currentAuthorityFilter = (auth && auth.length <= 100) ? auth : '';
             const tag = params.get('tag');
             currentTagFilter = (tag && tag.length <= 50) ? tag : '';
             const sortCol = params.get('sort');
@@ -1132,34 +1237,51 @@
                 searchDebounceTimer = setTimeout(handleSearch, 150);
             }
 
-            // Authority input: 与搜索框同款 IME + 防抖处理；选中 datalist 建议会触发 change。
-            // 注意：输入事件里同步更新 currentAuthorityFilter，仅防抖 applyFilterAndSort——
-            // 否则 updateChipStates() 回显可能把防抖期间已清空/修改的输入值恢复
-            const authorityInput = document.getElementById('authorityInput');
+            // 制定机关可检索下拉：面板内检索框只缩小候选范围，不触发表格过滤；
+            // 选择（点击 / Enter）才应用筛选。IME 组合期间不重渲染候选列表
+            const authoritySearch = document.getElementById('authoritySearch');
             let authComposing = false;
-            let authDebounceTimer;
-            authorityInput.addEventListener('compositionstart', function() { authComposing = true; });
-            authorityInput.addEventListener('compositionend', function() {
+            authoritySearch.addEventListener('compositionstart', function() { authComposing = true; });
+            authoritySearch.addEventListener('compositionend', function() {
                 authComposing = false;
-                currentAuthorityFilter = authorityInput.value.trim();
-                scheduleAuthorityFilter();
+                authorityActiveIndex = -1;
+                renderAuthorityOptions();
             });
-            authorityInput.addEventListener('input', function() {
+            authoritySearch.addEventListener('input', function() {
                 if (authComposing) return;
-                currentAuthorityFilter = authorityInput.value.trim();
-                scheduleAuthorityFilter();
+                authorityActiveIndex = -1;
+                renderAuthorityOptions();
             });
-            authorityInput.addEventListener('change', function() {
-                currentAuthorityFilter = authorityInput.value.trim();
-                scheduleAuthorityFilter();
+            authoritySearch.addEventListener('keydown', function(e) {
+                const items = Array.from(document.querySelectorAll('#authorityOptions li[role="option"]'));
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    closeAuthorityDropdown();
+                    document.getElementById('authoritySelectBtn').focus();
+                } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    if (!items.length) return;
+                    authorityActiveIndex += e.key === 'ArrowDown' ? 1 : -1;
+                    if (authorityActiveIndex < 0) authorityActiveIndex = items.length - 1;
+                    if (authorityActiveIndex >= items.length) authorityActiveIndex = 0;
+                    items.forEach((li, i) => li.classList.toggle('option-active', i === authorityActiveIndex));
+                    items[authorityActiveIndex].scrollIntoView({ block: 'nearest' });
+                } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const target = items[authorityActiveIndex >= 0 ? authorityActiveIndex : 0];
+                    if (target) setAuthorityFilter(target.dataset.value || '');
+                }
             });
-            function scheduleAuthorityFilter() {
-                clearTimeout(authDebounceTimer);
-                authDebounceTimer = setTimeout(function() {
-                    currentPage = 1;
-                    applyFilterAndSort();
-                }, 150);
-            }
+            // 候选点击（事件委托，避免内联 handler 的引号转义问题）
+            document.getElementById('authorityOptions').addEventListener('click', function(e) {
+                const li = e.target.closest('li[role="option"]');
+                if (li) setAuthorityFilter(li.dataset.value || '');
+            });
+            // 点击面板外部关闭
+            document.addEventListener('click', function(e) {
+                const dd = document.getElementById('authorityDropdown');
+                if (!dd.hidden && !e.target.closest('.authority-combo')) closeAuthorityDropdown();
+            });
 
             // Re-render on resize / orientation change, but only when items-per-page
             // actually changes (crossing the mobile breakpoint); plain resizes keep the page
@@ -1184,10 +1306,12 @@
             restoreStateFromHash();
             window.addEventListener('hashchange', function() {
                 restoreStateFromHash();
-                // 数据已加载时校验位阶取值有效性：数据中不存在则回退（机关为自由文本无需校验）
+                // 数据已加载时校验筛选取值有效性：数据中不存在则回退（机关为精确匹配，同样需校验）
                 // 数据未加载时跳过，避免把 hash 还原的合法取值误清
                 if (allData.length) {
                     currentHierarchyFilter = validateFilterValue('legal_hierarchy', currentHierarchyFilter);
+                    const authValidated = validateFilterValue('issuing_authority', currentAuthorityFilter || 'all');
+                    currentAuthorityFilter = authValidated === 'all' ? '' : authValidated;
                 }
                 applyFilterAndSort();
             });
@@ -1236,6 +1360,8 @@
                     }
 
                     currentHierarchyFilter = validateFilterValue('legal_hierarchy', currentHierarchyFilter);
+                    const authValidated = validateFilterValue('issuing_authority', currentAuthorityFilter || 'all');
+                    currentAuthorityFilter = authValidated === 'all' ? '' : authValidated;
                     applyFilterAndSort();
                     document.getElementById('loading').style.display = 'none';
                     document.getElementById('pagination').style.display = 'flex';
@@ -1307,9 +1433,9 @@
 
             // 1. Filter
             let temp = allData.filter(item => passesFilters(item, searchTerm, null));
-            // 联动计数：位阶下拉与机关建议列表随其他筛选实时收窄
+            // 联动计数：位阶下拉与机关候选列表随其他筛选实时收窄
             updateFacetOptions('hierarchySelect', 'legal_hierarchy', currentHierarchyFilter, '全部位阶', searchTerm, 'hierarchy');
-            updateAuthoritySuggestions(searchTerm);
+            renderAuthorityOptions();
 
             // 2. Sort
             if (currentSort.column) {
