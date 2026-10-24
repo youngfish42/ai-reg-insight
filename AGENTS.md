@@ -4,7 +4,7 @@
 
 ## 1. 项目概览
 
-- **名称**：law_scraper（law_query）
+- **名称**：AI 法规瞭望（AI Reg Insight，仓库 slug：ai-reg-insight；原 law_scraper / law_query）
 - **目标**：使用关键词在「北大法宝」(https://www.pkulaw.com) 检索法律法规、立法资料、法律动态等，导出为 CSV / JSON / RSS，并通过 GitHub Pages 提供网页浏览。
 - **运行方式**：本地命令行执行 `query.py`，或由 GitHub Actions 每日定时抓取后自动提交。
 
@@ -31,8 +31,10 @@ law_scraper/
 ├── mcp_backfill_state.json           # MCP 覆盖账本（v2：月份×关键词 已确定覆盖的日区间）
 ├── feed.xml                          # 生成的 RSS 2.0
 ├── meta.json                         # 最近更新时间（北京时间）
+├── docs/banner.svg                   # README 首屏横幅（LOGO + 数据流向示意）
+├── docs/USAGE.md                     # 使用与部署文档（参数、Pages 部署、输出格式）
 ├── requirements.txt
-└── README.md
+└── README.md                         # 项目门户页（首屏展示：定位、亮点、在线访问）
 ```
 
 ## 4. 数据契约

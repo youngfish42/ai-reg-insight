@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="300" viewBox="0 0 1000 300">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0f2027"/>
+      <stop offset="0.5" stop-color="#203a43"/>
+      <stop offset="1" stop-color="#2c5364"/>
+    </linearGradient>
+    <linearGradient id="beam" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#4fd1c5" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#4fd1c5" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1000" height="300" rx="16" fill="url(#bg)"/>
+
+  <!-- 雷达/瞭望 LOGO -->
+  <g transform="translate(150,150)">
+    <circle r="95" fill="none" stroke="#4fd1c5" stroke-opacity="0.25" stroke-width="2"/>
+    <circle r="65" fill="none" stroke="#4fd1c5" stroke-opacity="0.4" stroke-width="2"/>
+    <circle r="35" fill="none" stroke="#4fd1c5" stroke-opacity="0.6" stroke-width="2"/>
+    <line x1="-95" y1="0" x2="95" y2="0" stroke="#4fd1c5" stroke-opacity="0.15" stroke-width="1"/>
+    <line x1="0" y1="-95" x2="0" y2="95" stroke="#4fd1c5" stroke-opacity="0.15" stroke-width="1"/>
+    <path d="M 0 0 L 67 -67 A 95 95 0 0 0 -20 -93 Z" fill="url(#beam)"/>
+    <line x1="0" y1="0" x2="67" y2="-67" stroke="#4fd1c5" stroke-width="2"/>
+    <circle r="6" fill="#4fd1c5"/>
+    <circle cx="30" cy="-42" r="4" fill="#f6e05e"/>
+    <circle cx="-48" cy="20" r="4" fill="#f6e05e"/>
+    <circle cx="18" cy="55" r="4" fill="#f6e05e"/>
+    <circle cx="-25" cy="-60" r="3" fill="#90cdf4"/>
+  </g>
+
+  <!-- 项目名 -->
+  <text x="300" y="135" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="52" font-weight="700" fill="#ffffff">AI 法规瞭望</text>
+  <text x="302" y="175" font-family="'Segoe UI',sans-serif" font-size="22" letter-spacing="4" fill="#4fd1c5">AI REG INSIGHT</text>
+  <text x="302" y="212" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="17" fill="#cbd5e0">追踪 · 调研 · 展示人工智能领域相关法规信息</text>
+
+  <!-- 数据流向示意 -->
+  <g font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="14" fill="#e2e8f0" text-anchor="middle">
+    <g transform="translate(660,255)">
+      <rect x="-70" y="-16" width="140" height="32" rx="8" fill="#ffffff" fill-opacity="0.08" stroke="#4fd1c5" stroke-opacity="0.5"/>
+      <text y="5">法规信息来源</text>
+    </g>
+    <g transform="translate(800,255)">
+      <rect x="-55" y="-16" width="110" height="32" rx="8" fill="#ffffff" fill-opacity="0.08" stroke="#4fd1c5" stroke-opacity="0.5"/>
+      <text y="5">统一数据集</text>
+    </g>
+    <g transform="translate(915,255)">
+      <rect x="-60" y="-16" width="120" height="32" rx="8" fill="#ffffff" fill-opacity="0.08" stroke="#4fd1c5" stroke-opacity="0.5"/>
+      <text y="5">网页 / RSS</text>
+    </g>
+    <g stroke="#4fd1c5" stroke-width="2" fill="none">
+      <path d="M 735 255 h 10" marker-end="url(#arrow)"/>
+      <path d="M 860 255 h 10" marker-end="url(#arrow)"/>
+    </g>
+  </g>
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#4fd1c5"/>
+    </marker>
+  </defs>
+</svg>
