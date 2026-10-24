@@ -31,7 +31,7 @@ law_scraper/
 ├── mcp_backfill_state.json           # MCP 覆盖账本（v2：月份×关键词 已确定覆盖的日区间）
 ├── feed.xml                          # 生成的 RSS 2.0
 ├── meta.json                         # 最近更新时间（北京时间）
-├── docs/banner.svg                   # README 首屏横幅（LOGO + 数据流向示意）
+├── docs/banner.svg                   # README 首屏横幅（雷达 LOGO + 法规文书装饰图形）
 ├── docs/USAGE.md                     # 使用与部署文档（参数、Pages 部署、输出格式）
 ├── requirements.txt
 └── README.md                         # 项目门户页（首屏展示：定位、亮点、在线访问）
