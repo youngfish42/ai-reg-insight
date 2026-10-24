@@ -973,10 +973,36 @@
         }
 
         const LIST_FIELDS = ['timeliness', 'legal_hierarchy', 'issuing_authority', 'subject_tags'];
+
+        // issuing_authority 是「根→…→叶子」分类路径的扁平化（多部门联合发文时多分支并列），
+        // 以下类目节点仅供分类，非实际发文机关，列表展示时过滤（搜索/筛选仍用全量节点）
+        const AUTHORITY_ROOT_NAMES = new Set([
+            '国务院各机构', '党中央部门机构', '其他机构',
+            '北京市', '天津市', '上海市', '重庆市', '台湾省',
+            '香港特别行政区', '澳门特别行政区',
+            '河北省', '山西省', '辽宁省', '吉林省', '黑龙江省', '江苏省', '浙江省',
+            '安徽省', '福建省', '江西省', '山东省', '河南省', '湖北省', '湖南省',
+            '广东省', '海南省', '四川省', '贵州省', '云南省', '陕西省', '甘肃省', '青海省',
+            '内蒙古自治区', '广西壮族自治区', '西藏自治区', '宁夏回族自治区', '新疆维吾尔自治区'
+        ]);
+        const AUTHORITY_GENERIC_NODES = new Set(['其他', '协会', '各部', '各委', '各局', '各署', '各院', '各台', '各银行']);
+        function isAuthorityCategoryNode(name) {
+            return AUTHORITY_ROOT_NAMES.has(name)
+                || AUTHORITY_GENERIC_NODES.has(name)
+                || name.endsWith('其他机构')
+                || (name.startsWith('各') && name.endsWith('(其他)'));
+        }
+        // 叶子（实际发文机关）；联合发文保留全部叶子。叶子本身是兜底类目（如 某市其他机构）时回退为末段
+        function leafAuthorities(list) {
+            const leaves = list.filter(v => !isAuthorityCategoryNode(v));
+            return leaves.length ? leaves : list.slice(-1);
+        }
+
         function prepareRows(rows) {
             return rows.filter(row => row.title && row.url).map(row => {
                 row._lists = Object.create(null);
                 LIST_FIELDS.forEach(field => { row._lists[field] = parseList(row[field]); });
+                row._authorityDisplay = leafAuthorities(row._lists.issuing_authority).join('；');
                 row._sortValues = Object.create(null);
                 VALID_SORT_COLUMNS.forEach(field => {
                     row._sortValues[field] = (row[field] || '').toString().toLowerCase();
@@ -1729,7 +1755,7 @@
                     <td class="cell-title">${titleCellHtml}${newBadgeHtml}${pendingBadgeHtml}${tagPillsHtml}</td>
                     <td class="col-docno"><span class="cell-label">发文字号</span><span>${escapeHtml(row.document_no) || '-'}</span></td>
                     <td class="col-date"><span class="cell-label">公布日期</span><span>${escapeHtml(row.publish_date) || '-'}${effectiveDateHtml}</span></td>
-                    <td class="col-authority"><span class="cell-label">制定机关</span><span>${escapeHtml(row.issuing_authority) || '-'}</span></td>
+                    <td class="col-authority"><span class="cell-label">制定机关</span><span${row._authorityDisplay !== row.issuing_authority ? ` title="${escapeHtml(row.issuing_authority)}"` : ''}>${escapeHtml(row._authorityDisplay) || '-'}</span></td>
                     <td class="col-hierarchy"><span class="cell-label">效力位阶</span><span>${escapeHtml(row.legal_hierarchy) || '-'}</span></td>
                 `;
                 tr.addEventListener('click', function(e) {
