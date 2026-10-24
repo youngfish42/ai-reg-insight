@@ -22,7 +22,7 @@
   </g>
 
   <!-- LOGO + 字标 lockup，整体水平居中 -->
-  <g transform="translate(285,150)">
+  <g transform="translate(245,150)">
     <circle r="72" fill="none" stroke="#4fd1c5" stroke-opacity="0.35" stroke-width="2.5"/>
     <circle r="48" fill="none" stroke="#4fd1c5" stroke-opacity="0.5" stroke-width="2.5"/>
     <circle r="24" fill="none" stroke="#4fd1c5" stroke-opacity="0.7" stroke-width="2.5"/>
@@ -36,8 +36,8 @@
     <circle cx="14" cy="42" r="4" fill="#f6e05e"/>
   </g>
 
-  <text x="405" y="148" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="58" font-weight="700" fill="#ffffff">AI 法规瞭望</text>
-  <text x="407" y="192" font-family="'Segoe UI',sans-serif" font-size="20" letter-spacing="6" fill="#4fd1c5">AI REG INSIGHT</text>
-  <line x1="407" y1="212" x2="767" y2="212" stroke="#4fd1c5" stroke-opacity="0.35" stroke-width="1"/>
-  <text x="407" y="240" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="16" fill="#a0aec0">追踪 · 调研 · 展示人工智能领域相关法规信息</text>
+  <text x="365" y="148" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="58" font-weight="700" fill="#ffffff">AI 法规瞭望</text>
+  <text x="367" y="192" font-family="'Segoe UI',sans-serif" font-size="20" letter-spacing="6" fill="#4fd1c5">AI REG INSIGHT</text>
+  <line x1="367" y1="212" x2="727" y2="212" stroke="#4fd1c5" stroke-opacity="0.35" stroke-width="1"/>
+  <text x="367" y="240" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="16" fill="#a0aec0">追踪 · 调研 · 展示人工智能领域相关法规信息</text>
 </svg>
