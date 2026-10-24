@@ -1005,7 +1005,9 @@
                 row._authorityDisplay = leafAuthorities(row._lists.issuing_authority).join('；');
                 row._sortValues = Object.create(null);
                 VALID_SORT_COLUMNS.forEach(field => {
-                    row._sortValues[field] = (row[field] || '').toString().toLowerCase();
+                    // 制定机关按展示值（叶子）排序，与列内容一致
+                    const v = field === 'issuing_authority' ? row._authorityDisplay : row[field];
+                    row._sortValues[field] = (v || '').toString().toLowerCase();
                 });
                 row._searchText = [
                     row.title, row.category, row.publish_date, row.effective_date,
@@ -1755,7 +1757,7 @@
                     <td class="cell-title">${titleCellHtml}${newBadgeHtml}${pendingBadgeHtml}${tagPillsHtml}</td>
                     <td class="col-docno"><span class="cell-label">发文字号</span><span>${escapeHtml(row.document_no) || '-'}</span></td>
                     <td class="col-date"><span class="cell-label">公布日期</span><span>${escapeHtml(row.publish_date) || '-'}${effectiveDateHtml}</span></td>
-                    <td class="col-authority"><span class="cell-label">制定机关</span><span${row._authorityDisplay !== row.issuing_authority ? ` title="${escapeHtml(row.issuing_authority)}"` : ''}>${escapeHtml(row._authorityDisplay) || '-'}</span></td>
+                    <td class="col-authority"><span class="cell-label">制定机关</span><span${row._authorityDisplay !== (row.issuing_authority || '') ? ` title="${escapeHtml(row.issuing_authority)}"` : ''}>${escapeHtml(row._authorityDisplay) || '-'}</span></td>
                     <td class="col-hierarchy"><span class="cell-label">效力位阶</span><span>${escapeHtml(row.legal_hierarchy) || '-'}</span></td>
                 `;
                 tr.addEventListener('click', function(e) {
