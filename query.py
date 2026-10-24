@@ -1379,7 +1379,11 @@ def _record_from_mcp_item(item: dict) -> Optional[Record]:
         return None
 
     departments = _clean_str_list(item.get("IssueDepartment"))
-    hierarchies = _clean_str_list(item.get("EffectivenessDic"))
+    hierarchies = [
+        # 位阶名尾部可能带「XXnn」式数据库代码残留（如「XP08」），剥离
+        re.sub(r"「[A-Z]{2}\d+」$", "", h)
+        for h in _clean_str_list(item.get("EffectivenessDic"))
+    ]
     timeliness = "；".join(_clean_str_list(item.get("TimelinessDic")))
     # 发文字号可能带内嵌换行/制表符等脏空白；纯符号占位符（如 ---）视为无文号
     document_no = _clean_document_no(item.get("DocumentNO"))
