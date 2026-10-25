@@ -5,7 +5,7 @@
     <link>https://youngfish42.github.io/law_query/</link>
     <description>AI、数智化、大模型等相关法规的最新更新订阅</description>
     <language>zh-CN</language>
-    <lastBuildDate>Sat, 24 Oct 2026 08:59:00 +0800</lastBuildDate>
+    <lastBuildDate>Sun, 25 Oct 2026 08:36:00 +0800</lastBuildDate>
     <ttl>1440</ttl>
     <atom:link href="https://youngfish42.github.io/law_query/feed.xml" rel="self" type="application/rss+xml" />
     <item>
@@ -31,6 +31,14 @@
       <guid isPermaLink="true">https://www.pkulaw.com/news/45b559730dc54575bdfb.html?keyword=%E6%99%BA%E8%83%BD&amp;way=listView</guid>
       <category>法律动态</category>
       <pubDate>Tue, 20 Oct 2026 00:00:00 +0800</pubDate>
+    </item>
+    <item>
+      <title>国务院办公厅关于适应人工智能技术发展助力构建就业友好型发展方式的意见</title>
+      <link>https://www.pkulaw.com/chl/00205f85058fec9cbdfb.html?keyword=%E6%99%BA%E8%83%BD&amp;way=listView</link>
+      <description>分类：中央法规；公布日期：2026.10.16</description>
+      <guid isPermaLink="true">https://www.pkulaw.com/chl/00205f85058fec9cbdfb.html?keyword=%E6%99%BA%E8%83%BD&amp;way=listView</guid>
+      <category>中央法规</category>
+      <pubDate>Fri, 16 Oct 2026 00:00:00 +0800</pubDate>
     </item>
     <item>
       <title>《水运领域人工智能应用场景指引》解读</title>
@@ -799,14 +807,6 @@
       <guid isPermaLink="true">https://www.pkulaw.com/lar/6c028cf6a0345160957a1abe51182626bdfb.html</guid>
       <category>地方法规</category>
       <pubDate>Fri, 11 Sep 2026 00:00:00 +0800</pubDate>
-    </item>
-    <item>
-      <title>天津市交通运输委员会关于印发《天津市“人工智能+交通运输”行动方案》的通知</title>
-      <link>https://www.pkulaw.com/lar/ba30f56661d125e49e42d879e3f69919bdfb.html</link>
-      <description>分类：地方法规；公布日期：2026.09.10；制定机关：天津市；天津市其他机构；天津市交通运输委员会；效力位阶：地方工作文件；发文字号：津交发〔2026〕116号；时效性：现行有效</description>
-      <guid isPermaLink="true">https://www.pkulaw.com/lar/ba30f56661d125e49e42d879e3f69919bdfb.html</guid>
-      <category>地方法规</category>
-      <pubDate>Thu, 10 Sep 2026 00:00:00 +0800</pubDate>
     </item>
   </channel>
 </rss>
