@@ -49,7 +49,11 @@ jobs:
           if [ -n "$KEYWORD_INPUT" ]; then
             KEYWORDS="$KEYWORD_INPUT"
           else
-            KEYWORDS="智能,数智化,AI,高质量数据,大模型,算力,工业互联网,新兴产业,未来产业,数字化"
+            KEYWORDS=$(python -c 'from query import load_keywords; print(",".join(load_keywords("mcp")))')
+          fi
+          if [ -z "$KEYWORDS" ]; then
+            echo "::error::MCP 关键词配置为空或读取失败"
+            exit 1
           fi
 
           FULLTEXT_FLAG=""

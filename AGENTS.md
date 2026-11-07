@@ -24,6 +24,7 @@ law_scraper/
 ├── .github/workflows/update_law.yml  # 每日定时抓取并提交
 ├── .github/workflows/backfill_mcp.yml # 手动触发的 MCP 历史回填（积分预算制）
 ├── query.py                          # 主抓取脚本（Playwright）
+├── keywords.json                     # 浏览器小组 / MCP 扩展组关键词配置
 ├── generate_rss.py                   # 根据 CSV 生成 feed.xml
 ├── index.html                        # GitHub Pages 静态展示页
 ├── 法规.csv                          # 浏览器+MCP 融合后的统一数据集（持久化数据，按标题去重）
@@ -57,8 +58,9 @@ law_scraper/
 
 `meta.json` 形如 `{"updated_at": "2026-06-12 08:00"}`（北京时间）。
 
-`法规_mcp.jsonl` 每行一个 JSON 对象：MCP v2 `search_laws_by_keyword` 返回的原始 LawCard
-全字段（`law_title` / `document_no` / `issue_department` / `issue_date` /
+`法规_mcp.jsonl` 每行一个 JSON 对象：标题检索 `search_laws_by_keyword` 返回 LawCard，
+全文检索 `search_law_articles_by_keyword` 返回 ArticleCard，均保存原始 item 全字段
+（`law_title` / `document_no` / `issue_department` / `issue_date` /
 `implement_date` / `timeliness` / `effectiveness` / `category` / `scope` / `citation` 等），
 外加 `__meta` 子对象（`retrieved_at` / `keyword` / `search_field`，多次检索的关键词
 累积进 `keywords` 列表）记录检索上下文。响应外层为 `items` / `total_count` /
@@ -68,24 +70,25 @@ law_scraper/
 派生 Record（写入 `法规.csv`）时，`issue_department` 全量以 `；` 连接为 `issuing_authority`；
 `category` 是**主题分类**数组（科技/经济/公安…，与中央/地方法规的类别无关），
 映射为 `subject_tags`；`timeliness`→`timeliness`，`document_no`→`document_no`，
-`citation.url`→`url`，`scope`→`category`。
+`citation.url`→`url`，`scope`→`category`。同一法规命中多个法条时按 URL path / 标题去重。
 注意：早期从 `法规_mcp.csv` 迁移的行 Category 是类别字符串（非主题数组），不派生 subject_tags，
 重扫（`--refresh`）后会被富字段行整体替换。
 MCP 抓取完成后自动融合进 `法规.csv`（浏览器 + MCP 双渠道融合，网页 / RSS 只读 `法规.csv`）。
 MCP 服务仅覆盖中央 / 地方法规库，其 `category` 由 URL 路径段（chl/lar）经
-`enforce_category_by_url()` 复核。v2 接口虽支持游标分页，当前仍固定 `page_size=20`，
-沿用日期窗拆分策略。
+`enforce_category_by_url()` 复核。v2 标题检索 `page_size=20`，全文法条检索
+`page_size=10`；每个日期窗先按 `next_cursor` 翻页，最多 5 页、50 条，
+翻页时其他筛选与排序参数保持不变。超过 50 条再拆分日期窗。
 MCP 检索按目标月份的施行日期范围（`start_implement_date/end_implement_date`，YYYY-MM-DD）+
-时效性过滤（现行有效 / 尚未施行）构造参数，以规避单页 20 条下相关度排序
-把当月新法规挤出结果集的问题。默认仅按标题检索，`--fulltext` 可追加正文
-（fulltext）检索；`_mcp_search_span()` 对命中 20 条上限的日期跨度先粗后细
-自适应拆分：响应含窗口真实总数 `total_count` 时，同月窗口按 `ceil(total_count/20)` 等日
-子区间拆分，跨月窗口取「等日拆分块数」与「日历阶梯块数」中更小的扇出
-（`len(items) >= total_count` 视为已取全、直接覆盖）；`total_count` 缺失时退化为粒度阶梯
-（>400 天按日历年对齐拆 → 跨月按自然月拆 → 同月按日二分），最小粒度为天，
-空跨度一次调用即可整段覆盖；
-`_mcp_search_month()` 是它的月内薄封装（行为等同于直接在月内二分）。
-正文命中的记录不做标题二次过滤，噪声较多，故默认关闭。
+时效性过滤（现行有效 / 尚未施行）构造参数，以规避相关度排序把当月新法规挤出结果集的问题。
+默认仅按标题检索，`--fulltext` 可追加法条全文（fulltext）检索；
+`_mcp_search_span()` 对翻页后仍超过 50 条的日期跨度先粗后细自适应拆分：
+响应含窗口真实总数 `total_count` 时，同月窗口按 `ceil(total_count/50)` 等日子区间拆分，
+跨月窗口取「等日拆分块数」与「日历阶梯块数」中更小的扇出；`total_count` 缺失且
+已取满 50 条时退化为粒度阶梯（>400 天按日历年对齐拆 → 跨月按自然月拆 →
+同月按日二分），最小粒度为天，空跨度一次调用即可整段覆盖。
+`_mcp_search_month()` 是它的月内薄封装。翻页途中耗尽调用预算时，当前窗口完整续查，
+不误记为已覆盖；重复取回的条目由下游去重。
+全文法条命中的记录不做标题二次过滤，噪声较多，故默认关闭；每日 CI 不自动启用。
 
 ## 5. 常用命令
 
@@ -102,7 +105,7 @@ python query.py --keyword 智能 --out 法规.csv
 export PKULAW_MCP_TOKEN=<token>   # Windows cmd: set PKULAW_MCP_TOKEN=<token>
 python query.py --source mcp --keyword 智能 --out "法规_mcp.jsonl"
 
-# MCP 抓取并追加正文检索（覆盖面更广，但正文顺带提及的条目会带来噪声）
+# MCP 抓取并追加法条全文检索（仅显式指定时启用；覆盖面更广，但噪声较多）
 python query.py --source mcp --keyword 智能 --fulltext --out "法规_mcp.jsonl"
 
 # MCP 每日增量扫描（仅最近 5 天，节省积分；指定 --month 时忽略 --days）
@@ -133,8 +136,9 @@ python query.py --headed --slow-mo 200 --max-items 50
 python generate_rss.py
 ```
 
-CI 默认依次抓取的关键词列表（位于 workflow 中）：
-`智能 / 数智化 / AI / 高质量数据 / 大模型 / 算力 / 工业互联网 / 新兴产业 / 未来产业 / 数字化`
+关键词统一在根目录 `keywords.json` 配置：`browser` 为小型核心组，`mcp` 为扩展组。
+每日 CI 按 `source` 读取对应组；MCP 故障后的浏览器回退也改用 `browser` 组。
+手动 workflow 输入和 CLI `--keyword` 均优先于配置；MCP 回填未指定关键词时使用完整 MCP 组。
 
 ## 6. 代码风格与约束
 
@@ -157,13 +161,13 @@ CI 默认依次抓取的关键词列表（位于 workflow 中）：
 ## 8. CI / 自动化注意事项
 
 - Workflow 触发：每天 UTC 22:30（北京时间次日 06:30）；也可在 Actions 页手动 `workflow_dispatch`，支持 `keyword`、`source`（mcp/browser）与 `enrich_existing` 输入。
-- 定时任务 **MCP 优先**：每个关键词先走 MCP 服务（原始结果写 `法规_mcp.jsonl`，并融合更新 `法规.csv`），失败时回退浏览器抓取（写 `法规.csv`）；授权码取自仓库 Secret `PKULAW_MCP_TOKEN`（未配置时自动整体回退浏览器途径）。
+- 定时任务 **MCP 优先**：依次使用 `keywords.json` 的 MCP 扩展组检索（原始结果写 `法规_mcp.jsonl`，并融合更新 `法规.csv`）；失败时统一回退到 `browser` 小组抓取（写 `法规.csv`），不把 MCP 扩展词继续交给浏览器。授权码取自仓库 Secret `PKULAW_MCP_TOKEN`。
 - 积分节省策略：每日任务默认 `--days 5` 增量扫描（仅最近 5 天，月初自动跨入上月尾部），每周一改为整月复核以捕捉延迟入库的条目。
-- MCP 退出码约定：`0` 成功；`2` MCP 当日不可用（401/403/429 或 token 缺失，确定性错误，当日重试无意义）；`1` 瞬时故障。每日任务据此 fail-fast：命中退出码 2 时剩余关键词全部改走浏览器，不再逐个无效尝试。
+- MCP 退出码约定：`0` 成功；`2` MCP 当日不可用（401/403/429、900001 积分不足、900002 成员额度不足、900908 服务未开启或 token 缺失，确定性错误，当日重试无意义）；`1` 瞬时故障。每日任务据此 fail-fast：命中退出码 2 时停止剩余 MCP 检索，再统一运行浏览器小组。
 - Workflow 会 `git add 法规.csv 法规_mcp.jsonl mcp_backfill_state.json meta.json feed.xml` 并自动 commit & push，**请不要**让脚本写入其他需要提交的文件，除非同步更新 workflow。
 - 修改 workflow 里的自动提交步骤时，注意保留其中已配置的 `git config user.email / user.name`，不要随意替换 bot 身份。
 - `backfill_mcp.yml` 为**仅手动触发**的 MCP 历史回填 Action：用户在签到领取积分（约 10000 分/日）后触发，优先补当月缺漏、再回填 `start_month` 起的历史区间（历史区间按关键词把各月未覆盖补集跨月合并为大跨度，经 `_mcp_search_span` 先粗后细自适应拆分——空跨度 1 次调用即可整段覆盖，稀疏早期年份不再逐月空查；各关键词轮转扫描，避免有限预算下高热关键词独占额度；回填同样会融合更新 `法规.csv`，并重新生成 `feed.xml`）；`points_budget` 默认 `0`=不限（持续到积分耗尽，进度实时保存、下次续扫）；`refresh=true` 时忽略覆盖账本全量重扫（用于富化历史数据的富字段）。
-- 覆盖账本 `mcp_backfill_state.json`（v2，随仓库提交）记录每个 月份×关键词 已**确定覆盖**的日区间：日期 D 被覆盖 = 存在一次在 D 当日或之后执行且窗口包含 D 的成功扫描；每次 MCP 检索（含每日任务与手动 `--month`）成功后自动入账，回填只扫未覆盖的补集窗口。扫描因调用上限（`MCP_MAX_WINDOW_CALLS`）截断时，已完整解析的日区间即时入账、剩余未查窗口插回队列在同次运行内优先续扫，**不再整体中止**（避免单个高热组合永久阻塞后续关键词）；单日命中 20 条上限时接受截断并记为已覆盖（服务端硬上限的固有损耗）。账本按**标题检索**口径记账：标题检索截断时正文（fulltext）检索整体跳过，已入账区间的正文覆盖不再补做（需要时用 `--refresh` 全量重扫）。
+- 覆盖账本 `mcp_backfill_state.json`（v2，随仓库提交）记录每个 月份×关键词 已**确定覆盖**的日区间：日期 D 被覆盖 = 存在一次在 D 当日或之后执行且窗口包含 D 的成功扫描；每次 MCP 检索（含每日任务与手动 `--month`）成功后自动入账，回填只扫未覆盖的补集窗口。扫描因调用上限（`MCP_MAX_WINDOW_CALLS`）截断时，已完整解析的日区间即时入账、剩余未查窗口插回队列在同次运行内优先续扫，**不再整体中止**（避免单个高热组合永久阻塞后续关键词）；游标翻页途中耗尽调用预算时当前窗口不完整入账；单日在翻页后仍超过 50 条时接受截断并记为已覆盖（服务端单次检索上限的固有损耗）。账本按**标题检索**口径记账：标题检索截断时全文（fulltext）检索整体跳过，已入账区间的全文覆盖不再补做（需要时用 `--refresh` 全量重扫）。
 
 ## 9. 协作准则（给 AI 的硬性约束）
 
