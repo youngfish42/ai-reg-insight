@@ -57,27 +57,31 @@ law_scraper/
 
 `meta.json` 形如 `{"updated_at": "2026-06-12 08:00"}`（北京时间）。
 
-`法规_mcp.jsonl` 每行一个 JSON 对象：MCP 原始 item 的全部字段
-（get_law_list 的 LawModel 共 9 字段：Title/Url/Category/DocumentNO/IssueDepartment/
-IssueDate/ImplementDate/TimelinessDic/EffectivenessDic），
+`法规_mcp.jsonl` 每行一个 JSON 对象：MCP v2 `search_laws_by_keyword` 返回的原始 LawCard
+全字段（`law_title` / `document_no` / `issue_department` / `issue_date` /
+`implement_date` / `timeliness` / `effectiveness` / `category` / `scope` / `citation` 等），
 外加 `__meta` 子对象（`retrieved_at` / `keyword` / `search_field`，多次检索的关键词
-累积进 `keywords` 列表）记录检索上下文。JSONL 是 MCP 数据的**真相来源**，
+累积进 `keywords` 列表）记录检索上下文。响应外层为 `items` / `total_count` /
+`has_more` / `next_cursor`。JSONL 是 MCP 数据的**真相来源**，
 `法规.csv` 可随时用 `--fuse-only` 从中重建（写入经临时文件原子替换）。
-派生 Record（写入 `法规.csv`）时，`IssueDepartment` 全量以 `；` 连接为 `issuing_authority`；
-`Category` 是**主题分类**数组（科技/经济/公安…，与中央/地方法规的类别无关），
-映射为 `subject_tags`；`TimelinessDic`→`timeliness`，`DocumentNO`→`document_no`。
+历史行仍可能使用 PascalCase 旧字段，读取时须同时兼容新旧两套字段。
+派生 Record（写入 `法规.csv`）时，`issue_department` 全量以 `；` 连接为 `issuing_authority`；
+`category` 是**主题分类**数组（科技/经济/公安…，与中央/地方法规的类别无关），
+映射为 `subject_tags`；`timeliness`→`timeliness`，`document_no`→`document_no`，
+`citation.url`→`url`，`scope`→`category`。
 注意：早期从 `法规_mcp.csv` 迁移的行 Category 是类别字符串（非主题数组），不派生 subject_tags，
 重扫（`--refresh`）后会被富字段行整体替换。
 MCP 抓取完成后自动融合进 `法规.csv`（浏览器 + MCP 双渠道融合，网页 / RSS 只读 `法规.csv`）。
-MCP 服务仅覆盖中央 / 地方法规库，单次检索上限 20 条且不支持翻页，
-其 `category` 由 URL 路径段（chl/lar）经 `enforce_category_by_url()` 推断。
-MCP 检索按目标月份的施行日期范围（`startImplementDate/endImplementDate`）+
-时效性过滤（现行有效 / 尚未施行）构造参数，以规避 20 条上限下相关度排序
+MCP 服务仅覆盖中央 / 地方法规库，其 `category` 由 URL 路径段（chl/lar）经
+`enforce_category_by_url()` 复核。v2 接口虽支持游标分页，当前仍固定 `page_size=20`，
+沿用日期窗拆分策略。
+MCP 检索按目标月份的施行日期范围（`start_implement_date/end_implement_date`，YYYY-MM-DD）+
+时效性过滤（现行有效 / 尚未施行）构造参数，以规避单页 20 条下相关度排序
 把当月新法规挤出结果集的问题。默认仅按标题检索，`--fulltext` 可追加正文
 （fulltext）检索；`_mcp_search_span()` 对命中 20 条上限的日期跨度先粗后细
-自适应拆分：响应含窗口真实总数 `Total` 时，同月窗口按 `ceil(Total/20)` 等日
+自适应拆分：响应含窗口真实总数 `total_count` 时，同月窗口按 `ceil(total_count/20)` 等日
 子区间拆分，跨月窗口取「等日拆分块数」与「日历阶梯块数」中更小的扇出
-（`len(Data) >= Total` 视为已取全、直接覆盖）；`Total` 缺失时退化为粒度阶梯
+（`len(items) >= total_count` 视为已取全、直接覆盖）；`total_count` 缺失时退化为粒度阶梯
 （>400 天按日历年对齐拆 → 跨月按自然月拆 → 同月按日二分），最小粒度为天，
 空跨度一次调用即可整段覆盖；
 `_mcp_search_month()` 是它的月内薄封装（行为等同于直接在月内二分）。
@@ -93,7 +97,8 @@ playwright install chromium
 # 抓取单个关键词
 python query.py --keyword 智能 --out 法规.csv
 
-# 通过北大法宝 MCP 服务抓取（需先设置授权码环境变量；原始结果写入 JSONL，并自动融合进 法规.csv）
+# 通过北大法宝 MCP 服务抓取（授权码也可写入本地 .env：PKULAW_MCP_TOKEN=<token>）
+# 原始结果写入 JSONL，并自动融合进 法规.csv
 export PKULAW_MCP_TOKEN=<token>   # Windows cmd: set PKULAW_MCP_TOKEN=<token>
 python query.py --source mcp --keyword 智能 --out "法规_mcp.jsonl"
 

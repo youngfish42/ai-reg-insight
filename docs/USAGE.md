@@ -23,6 +23,14 @@ pip install -r requirements.txt
 playwright install chromium
 ```
 
+本地使用 MCP 时，可设置 `PKULAW_MCP_TOKEN` 环境变量，或在项目根目录创建 `.env`：
+
+```ini
+PKULAW_MCP_TOKEN=你的授权码
+```
+
+`.env` 已加入 `.gitignore`，不要提交真实授权码；GitHub Actions 仍使用仓库 Secret。
+
 ## 快速运行
 
 ```bash
@@ -43,7 +51,7 @@ python query.py --keyword 智能 --out 法规.csv --out-json results.json
 - `--max-items`：最多查询多少条（0 表示不限制，默认 0；对四个分类都生效）
 - `--slow-mo`：调试用，放慢浏览器操作（毫秒）
 - `--user-data-dir`：使用持久化浏览器目录保存 cookie（可用于需要登录的情况）
-- `--source mcp`：通过北大法宝 MCP 服务检索（需设置 `PKULAW_MCP_TOKEN` 环境变量）
+- `--source mcp`：通过北大法宝 MCP 服务检索（需设置 `PKULAW_MCP_TOKEN` 环境变量或本地 `.env`）
 - `--month YYYY.MM`：回填历史月份，用于补录遗漏数据
 - `--enrich-existing`：仅补全已有条目的制定机关 / 效力位阶
 
