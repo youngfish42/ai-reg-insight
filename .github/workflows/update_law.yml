@@ -55,53 +55,62 @@ jobs:
             # 仅补全已有条目的详情信息，不执行新搜索
             python query.py --enrich-existing --out "法规.csv"
           else
-            # 确定要查询的关键词列表
-            KEYWORD_INPUT="${{ inputs.keyword }}"
-            if [ -n "$KEYWORD_INPUT" ]; then
-              # 手动触发时指定了关键词，只查询该关键词
-              KEYWORDS=("$KEYWORD_INPUT")
-            else
-              # 未指定关键词时，依次查询所有默认关键词（每个关键词重新启动浏览器）
-              KEYWORDS=("智能" "数智化" "AI" "高质量数据" "大模型" "算力" "工业互联网" "新兴产业" "未来产业" "数字化")
-            fi
-
             # 数据来源：定时触发默认 mcp（MCP 优先）；手动触发可用 source 输入覆盖
             SOURCE="${{ inputs.source || 'mcp' }}"
             echo "Source: $SOURCE"
 
-            # 积分节省策略：每日仅增量扫最近 5 天（约 10 次调用 ≈ 250 积分）；
-            # 每周一全月复核，捕捉延迟入库/回溯添加的条目
+            # 关键词按数据源分组；手动输入优先，并同时作为故障回退关键词
+            KEYWORD_INPUT="${{ inputs.keyword }}"
+            if [ -n "$KEYWORD_INPUT" ]; then
+              KEYWORDS=("$KEYWORD_INPUT")
+              BROWSER_KEYWORDS=("$KEYWORD_INPUT")
+            else
+              mapfile -t KEYWORDS < <(python -c 'import sys; from query import load_keywords; print("\n".join(load_keywords(sys.argv[1])))' "$SOURCE")
+              mapfile -t BROWSER_KEYWORDS < <(python -c 'from query import load_keywords; print("\n".join(load_keywords("browser")))')
+            fi
+            if [ "${#KEYWORDS[@]}" -eq 0 ] || [ "${#BROWSER_KEYWORDS[@]}" -eq 0 ]; then
+              echo "::error::关键词配置为空或读取失败"
+              exit 1
+            fi
+
+            # 积分节省策略：每日仅增量扫最近 5 天；每周一全月复核
             DAYS_FLAG="--days 5"
             if [ "$(date +%u)" = "1" ]; then
               DAYS_FLAG=""
               echo "周一：全月复核（不使用增量窗口）"
             fi
 
-            # MCP 当日可用性标记：命中确定性错误（退出码 2）后置 false
-            MCP_AVAILABLE=true
-
-            for KW in "${KEYWORDS[@]}"; do
-              echo "=========================================="
-              echo "正在查询关键词: $KW"
-              echo "=========================================="
-              if [ "$SOURCE" = "mcp" ] && [ "$MCP_AVAILABLE" = "true" ]; then
-                # MCP 优先；按退出码分级处置：
-                #   2 = 积分不足/授权问题（确定性），本日剩余关键词全部改走浏览器
-                #   1 = 瞬时故障，仅本关键词回退浏览器，后续关键词仍尝试 MCP
+            if [ "$SOURCE" = "mcp" ]; then
+              BROWSER_FALLBACK=false
+              for KW in "${KEYWORDS[@]}"; do
+                echo "=========================================="
+                echo "正在通过 MCP 查询关键词: $KW"
+                echo "=========================================="
                 rc=0
                 python query.py --source mcp --keyword "$KW" --out "法规_mcp.jsonl" $DAYS_FLAG || rc=$?
                 if [ $rc -eq 2 ]; then
-                  echo "::warning::MCP 当日不可用（积分不足或授权问题），剩余关键词改用浏览器抓取"
-                  MCP_AVAILABLE=false
-                  python query.py --keyword "$KW" --out "法规.csv"
+                  echo "::warning::MCP 当日不可用，停止剩余 MCP 关键词"
+                  BROWSER_FALLBACK=true
+                  break
                 elif [ $rc -ne 0 ]; then
-                  echo "::warning::MCP 临时故障，关键词 $KW 回退浏览器抓取"
-                  python query.py --keyword "$KW" --out "法规.csv"
+                  echo "::warning::MCP 临时故障，关键词 $KW 将在浏览器小组中回退"
+                  BROWSER_FALLBACK=true
                 fi
-              else
-                python query.py --keyword "$KW" --out "法规.csv"
+              done
+              if [ "$BROWSER_FALLBACK" = "true" ]; then
+                echo "开始使用浏览器小组关键词回退抓取"
+                for KW in "${BROWSER_KEYWORDS[@]}"; do
+                  python query.py --keyword "$KW" --out "法规.csv"
+                done
               fi
-            done
+            else
+              for KW in "${KEYWORDS[@]}"; do
+                echo "=========================================="
+                echo "正在通过浏览器查询关键词: $KW"
+                echo "=========================================="
+                python query.py --keyword "$KW" --out "法规.csv"
+              done
+            fi
           fi
           
       - name: Generate Update Time

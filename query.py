@@ -35,28 +35,78 @@ BASE_URL = "https://www.pkulaw.com"
 # Pause (ms) between detail-page requests to avoid overloading the server
 DETAIL_PAGE_DELAY_MS = 1000
 
-# 北大法宝 MCP 服务（streamable HTTP，JSON-RPC）。授权码从环境变量读取，不落盘。
+# 北大法宝 MCP 服务（streamable HTTP，JSON-RPC）。授权码从环境变量或本地 .env 读取。
 MCP_LAW_ENDPOINT = "https://apim-gateway.pkulaw.com/mcp-law"
 MCP_TOKEN_ENV = "PKULAW_MCP_TOKEN"
 MCP_REQUEST_TIMEOUT_S = 60
-# get_law_list 的时效性过滤：排除废止/失效/已被修改的条目
+# 法规与法条关键词检索共用的时效性过滤：排除废止/失效/已被修改的条目
 MCP_TIMELINESS = ["现行有效", "尚未施行"]
+# 标题检索返回法规卡片，全文检索返回法条卡片，两者单页上限不同
+MCP_PAGE_SIZE = 20
+MCP_ARTICLE_PAGE_SIZE = 10
+# v2 每次检索最多翻 5 页、取 50 条；超过该规模再拆分日期窗
+MCP_MAX_CURSOR_PAGES = 5
+MCP_SEARCH_RESULT_LIMIT = 50
 # 相邻两次 MCP 调用的间隔（秒），保持礼貌请求节奏
 MCP_CALL_DELAY_S = 0.3
 # 每个检索字段（标题/全文）在自适应日期窗拆分下的最大调用次数，防止异常失控
 MCP_MAX_WINDOW_CALLS = 30
 # 大跨度拆分粒度阈值：超过该天数先按日历年对齐拆分，跨月按自然月拆，同月内按日二分
 MCP_SPAN_YEAR_THRESHOLD_DAYS = 400
-# get_law_list 每次调用的大致积分消耗（用于回填模式的预算换算）
+# 关键词检索每次调用的大致积分消耗（用于回填模式的预算换算）
 MCP_POINTS_PER_CALL = 25
 # 回填进度状态文件（随仓库提交，记录已完成的 月份|关键词 组合）
 MCP_BACKFILL_STATE_PATH = Path("mcp_backfill_state.json")
-# MCP 原始数据全字段落盘文件（JSONL，每行一个 get_law_list 原始 item + __meta）
+# MCP 原始数据全字段落盘文件（JSONL，每行一个 LawCard / ArticleCard + __meta）
 MCP_JSONL_DEFAULT_PATH = Path("法规_mcp.jsonl")
 # 旧版 MCP 结果文件（一次性迁移到 JSONL 后不再写入）
 MCP_LEGACY_CSV_PATH = Path("法规_mcp.csv")
 # MCP 派生记录与浏览器抓取结果融合后的统一 CSV
 MERGED_CSV_PATH = Path("法规.csv")
+# 浏览器与 MCP 的独立关键词配置
+KEYWORD_CONFIG_PATH = Path(__file__).with_name("keywords.json")
+
+
+def load_keywords(source: str) -> List[str]:
+    try:
+        config = json.loads(KEYWORD_CONFIG_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise SystemExit(f"无法读取关键词配置 {KEYWORD_CONFIG_PATH}: {e}") from e
+    if not isinstance(config, dict):
+        raise SystemExit(f"关键词配置 {KEYWORD_CONFIG_PATH} 顶层应为 JSON 对象")
+    values = config.get(source)
+    if not isinstance(values, list):
+        raise SystemExit(f"关键词配置 {KEYWORD_CONFIG_PATH} 缺少 {source} 数组")
+    keywords = list(dict.fromkeys(
+        value.strip() for value in values if isinstance(value, str) and value.strip()
+    ))
+    if not keywords:
+        raise SystemExit(f"关键词配置 {source} 不能为空")
+    return keywords
+
+
+def _load_mcp_token_from_env_file() -> None:
+    if os.environ.get(MCP_TOKEN_ENV):
+        return
+    env_path = Path(__file__).with_name(".env")
+    try:
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return
+    prefix = f"{MCP_TOKEN_ENV}="
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line.startswith(prefix):
+            continue
+        token = line[len(prefix):].strip()
+        if len(token) >= 2 and token[0] == token[-1] and token[0] in {"'", '"'}:
+            token = token[1:-1]
+        if token:
+            os.environ[MCP_TOKEN_ENV] = token
+        return
+
+
+_load_mcp_token_from_env_file()
 
 # 反 WAF 人机验证（“访问安全验证”拦截页）所需的浏览器参数。
 # 站点对 headless Chromium 指纹（navigator.webdriver 等）返回 567 拦截页，
@@ -88,9 +138,9 @@ class Record:
     legal_hierarchy: str = ""   # 效力位阶
     effective_date: str = ""    # YYYY.MM.DD，来源于列表的“施行/实施/生效”日期
     source: str = "browser"     # 数据来源：browser | mcp
-    timeliness: str = ""        # 时效性（MCP TimelinessDic，；连接）
-    document_no: str = ""       # 发文字号（MCP DocumentNO）
-    subject_tags: str = ""      # 主题分类（MCP Category 数组，；连接）
+    timeliness: str = ""        # 时效性（MCP timeliness）
+    document_no: str = ""       # 发文字号（MCP document_no）
+    subject_tags: str = ""      # 主题分类（MCP category 数组，；连接）
 
 
 PUBLISH_RE = re.compile(r"(\d{4}\.\d{2}(?:\.\d{2})?)\s*公布")
@@ -995,15 +1045,22 @@ async def click_load_more_until_done(
     return results
 
 
-def filter_records_by_keywords(records: List[Record], keywords: List[str]) -> List[Record]:
-    """对记录列表按关键词清单进行二次过滤，仅保留标题中包含至少一个关键词的记录。"""
-    normalized = [kw.strip().lower() for kw in keywords if kw.strip()]
+def _title_matches_keywords(title: str, keywords: List[str]) -> bool:
+    normalized = [
+        unicodedata.normalize("NFKC", kw.strip()).lower()
+        for kw in keywords if kw.strip()
+    ]
     if not normalized:
-        return records
+        return True
+    normalized_title = unicodedata.normalize("NFKC", title).lower()
+    return any(kw in normalized_title for kw in normalized)
+
+
+def filter_records_by_keywords(records: List[Record], keywords: List[str]) -> List[Record]:
+    """按标题关键词过滤，使用 NFKC 兼容全角字母和标点（如 AI＋）。"""
     filtered = []
     for r in records:
-        title_lower = r.title.lower()
-        if any(kw in title_lower for kw in normalized):
+        if _title_matches_keywords(r.title, keywords):
             filtered.append(r)
         else:
             print(f"DEBUG: 关键词过滤 - 跳过记录 '{r.title[:50]}' (标题不含任何关键词)")
@@ -1016,13 +1073,21 @@ class McpUnavailableError(RuntimeError):
     """MCP 服务当日不可用（积分不足 / Token 无效 / 服务未开通），重试无意义。"""
 
 
-# 官方《错误处理指南》：401=Token 无效或过期；403=服务未开通/已过期；
-# 429=频率超限或配额（积分）已用完；402 兜底。响应体含积分类关键字同样视为不可用。
+# 官方错误说明：401=Token 无效；403=服务未开通；429=频率或配额超限；
+# 900001=积分不足；900002=成员 Token 额度不足；900908=服务未开启。
 _MCP_UNAVAILABLE_STATUS = {401, 402, 403, 429}
+_MCP_UNAVAILABLE_CODES = (900001, 900002, 900908)
 _MCP_UNAVAILABLE_KEYWORDS = ("积分", "quota", "余额")
 
 # 退出码约定：0=成功；2=MCP 不可用（确定性错误，当日重试无意义）；1=其他（瞬时）错误
 EXIT_MCP_UNAVAILABLE = 2
+
+
+def _is_mcp_unavailable(message: str) -> bool:
+    lowered = message.lower()
+    return any(k in lowered for k in _MCP_UNAVAILABLE_KEYWORDS) or any(
+        str(code) in message for code in _MCP_UNAVAILABLE_CODES
+    )
 
 
 def _mcp_rpc(token: str, method: str, params: Optional[dict], req_id: Optional[int]) -> dict:
@@ -1048,9 +1113,7 @@ def _mcp_rpc(token: str, method: str, params: Optional[dict], req_id: Optional[i
             raw = resp.read().decode("utf-8")
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", errors="replace")[:200]
-        if e.code in _MCP_UNAVAILABLE_STATUS or any(
-            k in detail for k in _MCP_UNAVAILABLE_KEYWORDS
-        ):
+        if e.code in _MCP_UNAVAILABLE_STATUS or _is_mcp_unavailable(detail):
             raise McpUnavailableError(f"HTTP {e.code}: {detail}") from e
         if e.code == 400:
             raise RuntimeError(f"MCP 请求参数错误（HTTP 400）: {detail}") from e
@@ -1076,10 +1139,10 @@ def _mcp_rpc(token: str, method: str, params: Optional[dict], req_id: Optional[i
 
 
 def _month_implement_range(month_prefix: str) -> tuple:
-    """由 'YYYY.MM' 生成当月施行日期范围（'YYYY.M.D' 非补零，与接口文档示例一致）。"""
+    """由 'YYYY.MM' 生成当月施行日期范围（YYYY-MM-DD）。"""
     year, month = (int(part) for part in month_prefix.split("."))
     last_day = calendar.monthrange(year, month)[1]
-    return f"{year}.{month}.1", f"{year}.{month}.{last_day}"
+    return f"{year:04d}-{month:02d}-01", f"{year:04d}-{month:02d}-{last_day:02d}"
 
 
 def _recent_windows(today: datetime, days: int) -> List[tuple]:
@@ -1109,38 +1172,53 @@ def _mcp_handshake(token: str) -> None:
     _mcp_rpc(token, "notifications/initialized", None, req_id=None)
 
 
-def _mcp_call_get_law_list(
+def _mcp_search_tool_config(field: str) -> tuple:
+    if field == "title":
+        return "search_laws_by_keyword", MCP_PAGE_SIZE
+    if field == "fulltext":
+        return "search_law_articles_by_keyword", MCP_ARTICLE_PAGE_SIZE
+    raise ValueError(f"未知 MCP 检索字段: {field!r}")
+
+
+def _mcp_call_search_by_keyword(
     token: str,
     keyword: str,
     start_date: str,
     end_date: str,
     field: str = "title",
+    cursor: str = "",
 ) -> tuple:
-    """调用 get_law_list 工具检索法规列表（服务端单次上限 20 条、按相关度排序）。
+    """标题检索法规卡片，全文检索法条卡片；两者均按相关度排序。
 
-    field 为 'title'（标题关键词）或 'fulltext'（正文关键词）；
-    必须传入施行日期范围，否则当月新法规会被历史高相关度条目挤出前 20 条（实测 0/20）。
-    返回 (条目列表, Total)。Total 为服务端返回的窗口命中总数（可能超过 20 条上限），
-    用于按比例拆分日期窗；响应缺少该字段时为 None（退化为盲目二分）。"""
+    必须传入施行日期范围，避免当月新法规被历史高相关度条目挤出首页。
+    cursor 为上一页返回的 next_cursor；翻页时其余参数保持不变。
+    返回 (items, total_count, has_more, next_cursor)。"""
+    tool_name, page_size = _mcp_search_tool_config(field)
     arguments = {
         field: keyword,
         "timeliness": MCP_TIMELINESS,
-        "startImplementDate": start_date,
-        "endImplementDate": end_date,
+        "start_implement_date": start_date,
+        "end_implement_date": end_date,
+        "page_size": page_size,
     }
+    if cursor:
+        arguments["cursor"] = cursor
     resp = _mcp_rpc(token, "tools/call", {
-        "name": "get_law_list",
+        "name": tool_name,
         "arguments": arguments,
     }, req_id=2)
     if "error" in resp:
         msg = str(resp["error"])[:200]
-        if any(k in msg for k in _MCP_UNAVAILABLE_KEYWORDS):
+        if _is_mcp_unavailable(msg):
             raise McpUnavailableError(msg)
         raise RuntimeError(f"MCP 调用失败: {msg}")
     result = resp.get("result", {})
     if result.get("isError"):
         texts = [c.get("text", "") for c in result.get("content", [])]
-        raise RuntimeError(f"MCP 工具返回错误: {' '.join(texts)[:200]}")
+        msg = " ".join(texts)[:200]
+        if _is_mcp_unavailable(msg):
+            raise McpUnavailableError(msg)
+        raise RuntimeError(f"MCP 工具返回错误: {msg}")
     payload = result.get("structuredContent")
     if payload is None:
         # 兼容无 structuredContent 的服务端：content[0].text 为 JSON 文本
@@ -1149,20 +1227,24 @@ def _mcp_call_get_law_list(
                 payload = json.loads(c.get("text") or "{}")
                 break
     if not isinstance(payload, dict):
-        return [], None
-    data = payload.get("Data")
+        return [], None, False, None
+    data = payload.get("items")
     if not isinstance(data, list):
-        print(f"WARNING: MCP 返回无数据（Message={payload.get('Message', '?')}）")
-        return [], None
-    total = payload.get("Total")
+        print("WARNING: MCP 返回缺少 items 列表")
+        return [], None, False, None
+    total = payload.get("total_count")
     # type 判断排除 bool（isinstance(True, int) 为真）；负数/缺失一律视为不可用
     if type(total) is not int or total < 0:
         total = None
-    return data, total
+    has_more = payload.get("has_more") is True
+    next_cursor = payload.get("next_cursor")
+    if not isinstance(next_cursor, str) or not next_cursor:
+        next_cursor = None
+    return data, total, has_more, next_cursor
 
 
 def _split_span_into_chunks(start: date, end: date) -> List[tuple]:
-    """把命中 20 条上限的日期跨度拆成子区间（升序返回）。
+    """把翻页后仍超过 50 条的日期跨度拆成子区间（升序返回）。
 
     粒度阶梯：超过 MCP_SPAN_YEAR_THRESHOLD_DAYS 天先按日历年对齐拆分；
     跨月按自然月拆；同月内按日二分。子区间并集恰好等于原跨度。"""
@@ -1193,9 +1275,9 @@ def _split_span_into_chunks(start: date, end: date) -> List[tuple]:
 def _split_span_by_count(start: date, end: date, k: int) -> List[tuple]:
     """按命中总数把日期跨度均分为 k 个连续子区间（每个至少 1 天，升序返回）。
 
-    用于服务端返回真实总数（Total）时的按比例拆分：k = ceil(Total / 20)，
-    均匀分布假设下每个子区间直接低于 20 条上限；分布不均时子区间带各自
-    Total 继续递归拆分。"""
+    用于服务端返回真实总数（total）时的按比例拆分：k = ceil(total / 50)，
+    均匀分布假设下每个子区间可直接通过游标取全；分布不均时子区间带各自
+    total 继续递归拆分。"""
     if end <= start:
         return [(start, end)]
     days = (end - start).days + 1
@@ -1219,21 +1301,18 @@ def _mcp_search_span(
     field: str,
     max_calls: int = MCP_MAX_WINDOW_CALLS,
 ) -> tuple:
-    """对任意日期跨度做先粗后细的自适应拆分检索，规避服务端 20 条上限。
+    """日期窗内先用 cursor 翻页，超过单次检索 50 条上限再拆分日期。
 
-    从整段窗口开始，凡命中 20 条上限（结果可能被截断）的窗口拆细重查：
-    服务端返回真实总数（Total）时，同月窗口按 ceil(Total/20) 等日子区间拆分
-    （分布不均的子区间带各自 Total 继续递归）；跨月窗口取「等日拆分块数」与
-    「日历阶梯块数」中更小的一种扇出（稀疏分布等日拆分省掉空块探测，
-    聚集分布日历阶梯避免稀疏段超宽块）。Total 缺失时退化为
-    _split_span_into_chunks 的粒度阶梯（年→月→日二分）。最小粒度为天
-    （单日超过 20 条时接受截断）。空跨度一次调用即可整段覆盖。
-    栈式处理保证较新的子区间优先（与倒序回填一致）。命中上限被拆分的父窗口，
-    其返回的条目仍保留进结果（下游按 URL/标题去重）。调用间隔 MCP_CALL_DELAY_S。
-    max_calls 限制本次检索的最大调用次数（回填模式按剩余积分预算收紧）。
+    每个窗口最多按 v2 契约翻 5 页；标题每页 20 条，全文法条每页 10 条。
+    取满 50 条且 total 更大（或 total 未知）时，按 ceil(total/50) 等日拆分；
+    跨月窗口比较等日拆分与年/月日历阶梯，选择更小的扇出。total 缺失时
+    退化为日历粒度阶梯，最小粒度为天；单日超过 50 条时接受截断。
+    翻页中的窗口若耗尽 max_calls，会把整个窗口插回待查队列，不误记覆盖；
+    已取回条目保留并由下游去重。调用间隔 MCP_CALL_DELAY_S。
     返回 (原始条目列表, 实际调用次数, 是否因 max_calls 截断而未查完,
     已完整解析的 (start_date, end_date) 区间列表, 截断时剩余未查的窗口列表)。
     已解析区间互不相交，且与剩余窗口的并集等于请求跨度，可直接入覆盖账本。"""
+    _mcp_search_tool_config(field)
     items: List[dict] = []
     calls = 0
     covered: List[tuple] = []
@@ -1248,27 +1327,58 @@ def _mcp_search_span(
             )
             break
         win_start, win_end = stack.pop()
-        start_date = f"{win_start.year}.{win_start.month}.{win_start.day}"
-        end_date = f"{win_end.year}.{win_end.month}.{win_end.day}"
-        data, total = _mcp_call_get_law_list(token, keyword, start_date, end_date, field)
-        calls += 1
-        time.sleep(MCP_CALL_DELAY_S)
-        items.extend(data)
-        if total and len(data) >= total:
-            # Total 为窗口真实总数且已取回全部条目（含恰好 20 条的边界），
-            # 窗口确定完整覆盖，无需再拆。前提：Total 口径与 Data 一致
-            #（2026.10 实测 Total=131 > len(Data)=20 验证成立；若服务端改为
-            # 过滤后计数导致 Total 偏小，此处可能误标覆盖，排查时优先怀疑本行）
-            covered.append((win_start, win_end))
-            continue
-        if len(data) >= 20 and win_end > win_start:
-            # 走到这里必有 total is None 或 total > len(data) >= 20
+        start_date = win_start.isoformat()
+        end_date = win_end.isoformat()
+        window_items: List[dict] = []
+        total = None
+        cursor = ""
+        has_more = False
+        capped = False
+        pages = 0
+        for _ in range(MCP_MAX_CURSOR_PAGES):
+            if calls >= max_calls:
+                truncated = True
+                break
+            data, page_total, has_more, next_cursor = _mcp_call_search_by_keyword(
+                token, keyword, start_date, end_date, field, cursor=cursor
+            )
+            calls += 1
+            pages += 1
+            time.sleep(MCP_CALL_DELAY_S)
+            window_items.extend(data)
+            if page_total is not None:
+                total = page_total
+            if not has_more:
+                break
+            if not next_cursor:
+                capped = True
+                print(f"WARNING: {field} 窗口 {start_date}~{end_date} has_more=true 但缺少游标。")
+                break
+            cursor = next_cursor
+        else:
+            capped = has_more
+        items.extend(window_items)
+
+        if truncated:
+            # 当前窗口可能只翻了部分页面，完整重查比保存游标更稳妥；下游会去重。
+            stack.append((win_start, win_end))
+            print(
+                f"WARNING: {field} 检索已达最大调用次数 {max_calls}，"
+                f"窗口 {start_date}~{end_date} 将在后续续查。"
+            )
+            break
+        if pages > 1:
+            print(
+                f"DEBUG: {field} 窗口 {start_date}~{end_date} 游标翻页 {pages} 次，"
+                f"取回 {len(window_items)} 条（total={total}）"
+            )
+
+        needs_split = (capped or len(window_items) >= MCP_SEARCH_RESULT_LIMIT) and (
+            total is None or len(window_items) < total
+        )
+        if needs_split and win_end > win_start:
             if total is not None:
-                # Total 为窗口真实总数：同月窗口按 ceil(Total/20) 等日拆分（分布较均匀，
-                # 优于盲目二分）；跨月窗口比较两种扇出的预期调用量——等日拆分块数更少
-                # 时用等日拆分（稀疏分布，日历阶梯会产生大量空块探测），否则用日历阶梯
-                # （聚集分布，等日拆分在稀疏段会产生大量超宽块）
-                count_k = -(-total // 20)
+                count_k = -(-total // MCP_SEARCH_RESULT_LIMIT)
                 if (win_start.year, win_start.month) == (win_end.year, win_end.month):
                     chunks = _split_span_by_count(win_start, win_end, count_k)
                 else:
@@ -1282,18 +1392,19 @@ def _mcp_search_span(
             # 升序压栈，栈顶为最新子区间（最新优先处理）
             stack.extend(chunks)
             print(
-                f"DEBUG: {field} 窗口 {start_date}~{end_date} 命中上限 20 条"
-                f"（Total={total}），拆分为 {len(chunks)} 个子区间后继续"
+                f"DEBUG: {field} 窗口 {start_date}~{end_date} 翻页后取得 "
+                f"{len(window_items)} 条（total={total}），拆分为 {len(chunks)} 个子区间后继续"
             )
             continue
-        if len(data) >= 20:
-            # 单日仍命中上限：无法再拆，属服务端 20 条硬上限的固有损耗，接受截断
-            print(f"WARNING: {field} 单日 {start_date} 结果超过 20 条上限，已接受截断。")
-        elif total is not None and len(data) < total:
-            # Total 与 Data 数量不一致（疑似服务端截断或口径变化），记录告警便于排查
+        if needs_split:
             print(
-                f"WARNING: {field} 窗口 {start_date}~{end_date} Total={total} "
-                f"但仅返回 {len(data)} 条，按已覆盖处理，结果可能不全。"
+                f"WARNING: {field} 单日 {start_date} 超过单次检索 "
+                f"{MCP_SEARCH_RESULT_LIMIT} 条上限，已接受截断。"
+            )
+        elif total is not None and len(window_items) < total:
+            print(
+                f"WARNING: {field} 窗口 {start_date}~{end_date} total={total} "
+                f"但仅返回 {len(window_items)} 条，按已覆盖处理，结果可能不全。"
             )
         covered.append((win_start, win_end))
 
@@ -1312,10 +1423,10 @@ def _mcp_search_month(
     day_start: int = 1,
     day_end: Optional[int] = None,
 ) -> tuple:
-    """对目标月份（可限定日区间）做自适应日期窗拆分检索，规避服务端 20 条上限。
+    """对目标月份（可限定日区间）做自适应日期窗拆分检索，规避单次检索 50 条上限。
 
-    委托 _mcp_search_span：同月窗口在 Total 缺失时按日二分（与原行为一致），
-    Total 可用时按 ceil(Total/20) 等日拆分（更省调用）。
+    委托 _mcp_search_span：先用游标翻页；超过 50 条且 total 可用时按
+    ceil(total/50) 等日拆分，total 缺失时按日二分。
     返回 (原始条目列表, 实际调用次数, 是否因 max_calls 截断而未查完,
     已完整解析的月内日区间 [[d1, d2], ...] 列表)，可直接入覆盖账本。"""
     year, month = (int(part) for part in month_prefix.split("."))
@@ -1344,9 +1455,16 @@ def _normalize_mcp_date(value: str) -> str:
     return normalize_date_token(m.group(1), m.group(2), m.group(3) or "")
 
 
+def _mcp_item_value(item: dict, field: str, legacy_field: str):
+    """读取 v2 snake_case 字段，并兼容历史 JSONL 的 PascalCase 字段。"""
+    return item.get(field) or item.get(legacy_field)
+
+
 def _extract_mcp_url(item: dict) -> str:
-    """提取 MCP item 的 Url 字段中的真实链接（可能带 markdown 链接语法）。"""
-    raw_url = (item.get("Url") or "").strip()
+    """提取 v2 citation.url 或历史 Url 中的真实链接（可能带 markdown 语法）。"""
+    citation = item.get("citation") or {}
+    citation_url = citation.get("url") if isinstance(citation, dict) else ""
+    raw_url = (citation_url or item.get("url") or item.get("Url") or "").strip()
     m = _MD_LINK_RE.search(raw_url)
     url = m.group(1) if m else raw_url
     # 去掉 MCP 追踪参数，使 URL 与浏览器抓取的规范形式一致
@@ -1364,47 +1482,51 @@ def _clean_document_no(value) -> str:
 
 
 def _clean_str_list(value) -> List[str]:
-    """把 MCP 返回的数组字段清洗为字符串列表（防御非 list/非 str 元素）。"""
-    if not isinstance(value, list):
+    """把 MCP 返回的字符串或数组清洗为字符串列表。"""
+    values = [value] if isinstance(value, str) else value
+    if not isinstance(values, list):
         return []
-    return [v.strip() for v in value if isinstance(v, str) and v.strip()]
+    return [v.strip() for v in values if isinstance(v, str) and v.strip()]
 
 
 def _record_from_mcp_item(item: dict) -> Optional[Record]:
-    """把 get_law_list 的单条结果映射为 Record。分类优先取 item 的 Category
-    （旧 CSV 迁移行携带），最终由 URL 路径段（chl/lar）复核。"""
-    title = (item.get("Title") or "").strip()
+    """把法规 LawCard 或法条 ArticleCard 映射为 Record，兼容历史字段。
+    分类优先取 scope 或迁移行的类别字符串，最终由 URL 路径段（chl/lar）复核。"""
+    title = (_mcp_item_value(item, "law_title", "Title") or "").strip()
     url = _extract_mcp_url(item)
     if not title or not url:
         return None
 
-    departments = _clean_str_list(item.get("IssueDepartment"))
+    departments = _clean_str_list(_mcp_item_value(item, "issue_department", "IssueDepartment"))
     hierarchies = [
         # 位阶名尾部可能带「XXnn」式数据库代码残留（如「XP08」），剥离
         re.sub(r"「[A-Z]{2}\d+」$", "", h)
-        for h in _clean_str_list(item.get("EffectivenessDic"))
+        for h in _clean_str_list(_mcp_item_value(item, "effectiveness", "EffectivenessDic"))
     ]
-    timeliness = "；".join(_clean_str_list(item.get("TimelinessDic")))
+    timeliness = "；".join(
+        _clean_str_list(_mcp_item_value(item, "timeliness", "TimelinessDic"))
+    )
     # 发文字号可能带内嵌换行/制表符等脏空白；纯符号占位符（如 ---）视为无文号
-    document_no = _clean_document_no(item.get("DocumentNO"))
-    # Category 是数组时表示主题分类（进 subject_tags）；迁移行是"中央/地方法规"
-    # 类别字符串，仅作 category 依据，不进 subject_tags
-    raw_category = item.get("Category") or ""
-    subject_tags = ""
-    if isinstance(raw_category, list):
-        subject_tags = "；".join(_clean_str_list(raw_category))
-        raw_category = ""
-    elif not isinstance(raw_category, str):
+    document_no = _clean_document_no(_mcp_item_value(item, "document_no", "DocumentNO"))
+    # v2 category 是主题分类数组，scope 是中央/地方法规；迁移行只有 Category 类别字符串
+    raw_category = item.get("scope") or ""
+    raw_tags = _mcp_item_value(item, "category", "Category")
+    subject_tags = "；".join(_clean_str_list(raw_tags)) if isinstance(raw_tags, list) else ""
+    if not raw_category and isinstance(raw_tags, str):
+        raw_category = raw_tags
+    if not isinstance(raw_category, str):
         raw_category = ""
 
     return Record(
         category=enforce_category_by_url(raw_category, url),
         title=title,
         url=url,
-        publish_date=_normalize_mcp_date(item.get("IssueDate") or ""),
+        publish_date=_normalize_mcp_date(_mcp_item_value(item, "issue_date", "IssueDate") or ""),
         issuing_authority="；".join(departments),
         legal_hierarchy="；".join(hierarchies),
-        effective_date=_normalize_mcp_date(item.get("ImplementDate") or ""),
+        effective_date=_normalize_mcp_date(
+            _mcp_item_value(item, "implement_date", "ImplementDate") or ""
+        ),
         source="mcp",
         timeliness=timeliness,
         document_no=document_no,
@@ -1449,8 +1571,9 @@ def run_mcp(
 ) -> List[Record]:
     """通过北大法宝 MCP 服务检索法规：原始结果全字段落盘 JSONL，并派生融合进统一 法规.csv。
 
-    默认仅按标题（title）检索；传入 --fulltext 时追加正文（fulltext）检索，
-    均由 _mcp_search_month 做自适应日期窗拆分，规避服务端 20 条上限。
+    默认用 search_laws_by_keyword 按标题检索；传入 --fulltext 时追加
+    search_law_articles_by_keyword 法条全文检索。两者均由 _mcp_search_month
+    做自适应日期窗拆分，规避各自单次检索 50 条上限。
     days（--days）启用增量模式：仅检索最近 N 天（月初自动跨入上月尾部），
     供每日任务节省积分；指定 --month 时忽略 days，始终整月检索。"""
     _migrate_mcp_csv_to_jsonl(MCP_LEGACY_CSV_PATH, MCP_JSONL_DEFAULT_PATH)
@@ -1467,7 +1590,7 @@ def run_mcp(
     else:
         segments = [(current_month_prefix, 1, None)]
         print(f"目标月份: {current_month_prefix}")
-    print(f"正在通过 MCP 检索关键词: {keyword}（标题{' + 正文' if fulltext else ''}）")
+    print(f"正在通过 MCP 检索关键词: {keyword}（标题{' + 法条全文' if fulltext else ''}）")
 
     try:
         _mcp_handshake(token)
@@ -1508,7 +1631,7 @@ def run_mcp(
     # 标题二次过滤只约束「标题检索」来源的记录；
     # 仅由正文命中的记录（标题不含关键词）是全文检索的预期产出，直接保留。
     title_keys = {
-        title_dedup_key((item.get("Title") or "").strip())
+        title_dedup_key((_mcp_item_value(item, "law_title", "Title") or "").strip())
         for item in title_items
     }
     title_sourced = [r for r in all_records if title_dedup_key(r.title) in title_keys]
@@ -1704,7 +1827,7 @@ def _backfill_write_and_filter(
     records = _records_from_mcp_items(title_items + fulltext_items, month_prefixes)
     records = deduplicate_records_by_title(records)
     title_keys = {
-        title_dedup_key((it.get("Title") or "").strip())
+        title_dedup_key((_mcp_item_value(it, "law_title", "Title") or "").strip())
         for it in title_items
     }
     title_sourced = [r for r in records if title_dedup_key(r.title) in title_keys]
@@ -1970,7 +2093,7 @@ def _with_mcp_meta(item: dict, keyword: str, search_field: str) -> dict:
 def _mcp_item_dedup_key(item: dict) -> str:
     """JSONL 去重键：优先 URL path，否则标题（去全部空白）。"""
     return url_path_key(_extract_mcp_url(item)) or title_dedup_key(
-        (item.get("Title") or "").strip()
+        (_mcp_item_value(item, "law_title", "Title") or "").strip()
     )
 
 
@@ -2103,8 +2226,8 @@ def _fuse_jsonl_into_csv(jsonl_path: Path, csv_path: Path = MERGED_CSV_PATH) -> 
             keywords = meta.get("keywords") or []
             if not keywords and meta.get("keyword"):
                 keywords = [meta["keyword"]]
-            title = (item.get("Title") or "").strip().lower()
-            if keywords and not any(kw.strip().lower() in title for kw in keywords):
+            title = (_mcp_item_value(item, "law_title", "Title") or "").strip()
+            if not _title_matches_keywords(title, keywords):
                 continue
         r = _record_from_mcp_item(item)
         if r:
@@ -2368,7 +2491,11 @@ async def run(
 
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="查询法规信息并带交互式过滤")
-    ap.add_argument("--keyword", default="智能", help="检索词（默认：智能）")
+    ap.add_argument(
+        "--keyword",
+        default=None,
+        help="检索词；默认取 keywords.json 中对应 source 的首项，--backfill 取 MCP 全组",
+    )
     ap.add_argument(
         "--out",
         default=None,
@@ -2406,13 +2533,13 @@ def parse_args() -> argparse.Namespace:
         choices=["browser", "mcp"],
         default="browser",
         help="数据来源：browser=模拟浏览器抓取（默认）；mcp=北大法宝 MCP 服务"
-        f"（需设置环境变量 {MCP_TOKEN_ENV}）",
+        f"（需设置环境变量 {MCP_TOKEN_ENV} 或本地 .env）",
     )
     ap.add_argument(
         "--fulltext",
         action="store_true",
-        help="仅 --source mcp 有效：在标题检索之外追加正文（fulltext）检索"
-        "（覆盖面更广，但正文顺带提及的条目会带来噪声，默认关闭）",
+        help="仅 --source mcp 有效：在标题检索之外追加 search_law_articles_by_keyword "
+        "法条全文检索（覆盖面更广，但噪声较多，默认关闭，每日 CI 不自动启用）",
     )
     ap.add_argument(
         "--backfill",
@@ -2480,6 +2607,11 @@ def main() -> None:
 
     if args.refresh and not (args.source == "mcp" and args.backfill):
         raise SystemExit("--refresh 仅配合 --source mcp --backfill 使用")
+
+    if args.keyword is None:
+        use_mcp_group = args.source == "mcp" and args.backfill
+        configured = load_keywords("mcp" if use_mcp_group else args.source)
+        args.keyword = ",".join(configured) if use_mcp_group else configured[0]
 
     if args.enrich_existing:
         out_csv = Path(args.out) if args.out else MERGED_CSV_PATH

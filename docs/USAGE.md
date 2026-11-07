@@ -23,6 +23,23 @@ pip install -r requirements.txt
 playwright install chromium
 ```
 
+本地使用 MCP 时，可设置 `PKULAW_MCP_TOKEN` 环境变量，或在项目根目录创建 `.env`：
+
+```ini
+PKULAW_MCP_TOKEN=你的授权码
+```
+
+`.env` 已加入 `.gitignore`，不要提交真实授权码；GitHub Actions 仍使用仓库 Secret。
+
+## 关键词分组配置
+
+直接编辑项目根目录的 `keywords.json`：
+
+- `browser`：浏览器抓取使用的小型核心关键词组。
+- `mcp`：MCP 检索使用的扩展关键词组，也作为手动历史回填的默认组。
+- 每日 CI 按数据源选择分组；MCP 故障后的浏览器回退只使用 `browser` 组。
+- CLI `--keyword` 或 workflow 手动输入会覆盖默认分组。
+
 ## 快速运行
 
 ```bash
@@ -37,15 +54,18 @@ python query.py --keyword 智能 --out 法规.csv --out-json results.json
 
 ## 常用参数
 
-- `--keyword`：检索词（默认：智能）
+- `--keyword`：检索词；未指定时取 `keywords.json` 对应数据源的首项，MCP 回填则取完整 MCP 组
 - `--filter-keywords`：标题二次过滤关键词，逗号分隔（默认使用 `--keyword` 的值）；仅标题中包含至少一个关键词的条目才会被保存
 - `--headless / --headed`：无头/有头模式（默认无头）
 - `--max-items`：最多查询多少条（0 表示不限制，默认 0；对四个分类都生效）
 - `--slow-mo`：调试用，放慢浏览器操作（毫秒）
 - `--user-data-dir`：使用持久化浏览器目录保存 cookie（可用于需要登录的情况）
-- `--source mcp`：通过北大法宝 MCP 服务检索（需设置 `PKULAW_MCP_TOKEN` 环境变量）
+- `--source mcp`：通过北大法宝 MCP 服务检索（需设置 `PKULAW_MCP_TOKEN` 环境变量或本地 `.env`）
+- `--fulltext`：仅 `--source mcp` 有效；在标题检索外追加 `search_law_articles_by_keyword` 法条全文检索，每日 CI 默认不启用
 - `--month YYYY.MM`：回填历史月份，用于补录遗漏数据
 - `--enrich-existing`：仅补全已有条目的制定机关 / 效力位阶
+
+MCP 标题与全文检索均会自动跟随 `next_cursor` 翻页，每个日期窗最多读取 5 页、50 条；超过该规模时自动细分日期范围。
 
 示例（有头 + 放慢 + 限制 200 条）：
 
