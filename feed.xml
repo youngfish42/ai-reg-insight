@@ -5,9 +5,17 @@
     <link>https://youngfish42.github.io/law_query/</link>
     <description>AI、数智化、大模型等相关法规的最新更新订阅</description>
     <language>zh-CN</language>
-    <lastBuildDate>Thu, 19 Nov 2026 11:59:00 +0800</lastBuildDate>
+    <lastBuildDate>Fri, 20 Nov 2026 11:52:00 +0800</lastBuildDate>
     <ttl>1440</ttl>
     <atom:link href="https://youngfish42.github.io/law_query/feed.xml" rel="self" type="application/rss+xml" />
+    <item>
+      <title>中国互联网协会关于《AI服务器主板用40层及以上PCB低损耗树脂技术要求》等2项团体标准公开征求意见的通知</title>
+      <link>https://www.pkulaw.com/protocol/4de1917b75d176d0aa1f3759fc08dfc9bdfb.html?keyword=AI&amp;way=listView</link>
+      <description>分类：立法资料；公布日期：2026.11.19；制定机关：中国互联网协会；效力位阶：部门工作文件</description>
+      <guid isPermaLink="true">https://www.pkulaw.com/protocol/4de1917b75d176d0aa1f3759fc08dfc9bdfb.html?keyword=AI&amp;way=listView</guid>
+      <category>立法资料</category>
+      <pubDate>Thu, 19 Nov 2026 00:00:00 +0800</pubDate>
+    </item>
     <item>
       <title>上海市经济信息化委关于开展2026年度上海市新一代智能制造服务商申报工作的通知</title>
       <link>https://www.pkulaw.com/lar/0a14258254971c3d6f512c68e8cfadafbdfb.html</link>
@@ -799,14 +807,6 @@
       <guid isPermaLink="true">https://www.pkulaw.com/lar/89c8cbcc21c00124c27d883aa05cf6e5bdfb.html</guid>
       <category>地方法规</category>
       <pubDate>Thu, 22 Oct 2026 00:00:00 +0800</pubDate>
-    </item>
-    <item>
-      <title>中国互联网协会关于征集《工业智能体产业发展研究报告(2026年)》参编单位的通知</title>
-      <link>https://www.pkulaw.com/chl/bfc0aa0b4d635c47bdfb.html</link>
-      <description>分类：中央法规；公布日期：2026.10.21；制定机关：其他机构；协会；中国互联网协会；效力位阶：行业规定；时效性：现行有效</description>
-      <guid isPermaLink="true">https://www.pkulaw.com/chl/bfc0aa0b4d635c47bdfb.html</guid>
-      <category>中央法规</category>
-      <pubDate>Wed, 21 Oct 2026 00:00:00 +0800</pubDate>
     </item>
   </channel>
 </rss>
